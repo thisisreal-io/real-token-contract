@@ -113,6 +113,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     event ETHWithdrawn(uint256 _amount);
     event USDTWithdrawn(uint256 _amount);
     event USDCWithdrawn(uint256 _amount);
+    event DAIWithdrawn(uint256 _amount);
     event REALWithdrawn(uint256 _amount);
     event WithdrawalQueued(
         bytes32 indexed proposalId,
@@ -125,10 +126,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         address indexed token,
         uint256 amount
     );
-    event ProposalSigned(
-        bytes32 indexed proposalId,
-        address indexed signer
-    );
+    event ProposalSigned(bytes32 indexed proposalId, address indexed signer);
 
     // REAL 0x325Aa344761c19F7ab6dc45A95f01d6907A30DCA
     // USDT 0xdAC17F958D2ee523a2206206994597C13D831ec7
@@ -167,7 +165,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     }
 
     function signProposal(bytes32 _proposalId) external onlySigner {
-        require(!proposalSignatures[_proposalId][msg.sender], "Presale: Already signed");
+        require(
+            !proposalSignatures[_proposalId][msg.sender],
+            "Presale: Already signed"
+        );
         proposalSignatures[_proposalId][msg.sender] = true;
         proposalSignatureCount[_proposalId]++;
         if (proposalCreatedAt[_proposalId] == 0) {
@@ -176,7 +177,9 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         emit ProposalSigned(_proposalId, msg.sender);
     }
 
-    function hasRequiredSignatures(bytes32 _proposalId) public view returns (bool) {
+    function hasRequiredSignatures(
+        bytes32 _proposalId
+    ) public view returns (bool) {
         return proposalSignatureCount[_proposalId] >= REQUIRED_SIGNATURES;
     }
 
@@ -205,7 +208,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         signers[1] = 0x2438d494751cFeB9551342be64D3F7C645975067; // Aquisitions Wallet
         signers[2] = 0xeCCb924aFec718a2cB0a4546D6569c9E4F825177; // Org Operations Wallet
         signers[3] = 0xBc3B0Bdead411d8034b6DAC49e2e666dA8779D16; // Org Developement Wallet
-        signers[4] = 0xa39Be9812b96A198C92B7723dBb6E1D561Eb94F4; // Founder Wallet
+        signers[4] = 0x6C62EE2e74F5B80b83652E5aA4d6Cd4D8F99A583; // Liquidity Pool Wallet
     }
 
     function startICO(uint64 _icoDuration) external onlySigner {
@@ -392,9 +395,9 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             address(this).balance >= amount,
             "Presale: Not enough ETH in contract"
         );
-        
+
         bytes32 proposalId = getProposalId(address(0), amount, nonce);
-        
+
         // Auto-sign if not already signed by this signer
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
@@ -404,12 +407,12 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
-        
+
         // If not enough signatures yet, return (waiting for more signatures)
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        
+
         // If enough signatures but not queued yet, queue it
         if (withdrawalQueue[proposalId].queuedAt == 0) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
@@ -418,19 +421,27 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
                 queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(0), amount, block.timestamp + TIMELOCK_DURATION);
+            emit WithdrawalQueued(
+                proposalId,
+                address(0),
+                amount,
+                block.timestamp + TIMELOCK_DURATION
+            );
             return;
         }
-        
+
         // Execute withdrawal if timelock has passed
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
+        require(
+            block.timestamp >= queue.queuedAt + TIMELOCK_DURATION,
+            "Presale: Timelock not expired"
+        );
         require(!queue.executed, "Presale: Already executed");
-        
+
         queue.executed = true;
         (bool success, ) = payable(mainDepositWallet).call{value: amount}("");
         require(success, "Presale: ETH transfer failed");
-        
+
         emit ETHWithdrawn(amount);
         emit WithdrawalExecuted(proposalId, address(0), amount);
     }
@@ -440,9 +451,9 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             usdt.balanceOf(address(this)) >= amount,
             "Presale: Not enough USDT in contract"
         );
-        
+
         bytes32 proposalId = getProposalId(address(usdt), amount, nonce);
-        
+
         // Auto-sign if not already signed by this signer
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
@@ -452,12 +463,12 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
-        
+
         // If not enough signatures yet, return (waiting for more signatures)
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        
+
         // If enough signatures but not queued yet, queue it
         if (withdrawalQueue[proposalId].queuedAt == 0) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
@@ -466,17 +477,29 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
                 queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(usdt), amount, block.timestamp + TIMELOCK_DURATION);
+            emit WithdrawalQueued(
+                proposalId,
+                address(usdt),
+                amount,
+                block.timestamp + TIMELOCK_DURATION
+            );
             return;
         }
-        
+
         // Execute withdrawal if timelock has passed
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
+        require(
+            block.timestamp >= queue.queuedAt + TIMELOCK_DURATION,
+            "Presale: Timelock not expired"
+        );
         require(!queue.executed, "Presale: Already executed");
-        
+
         queue.executed = true;
-        SafeERC20.safeTransfer(IERC20(address(usdt)), mainDepositWallet, amount);
+        SafeERC20.safeTransfer(
+            IERC20(address(usdt)),
+            mainDepositWallet,
+            amount
+        );
 
         emit USDTWithdrawn(amount);
         emit WithdrawalExecuted(proposalId, address(usdt), amount);
@@ -487,9 +510,9 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             usdc.balanceOf(address(this)) >= amount,
             "Presale: Not enough USDC in contract"
         );
-        
+
         bytes32 proposalId = getProposalId(address(usdc), amount, nonce);
-        
+
         // Auto-sign if not already signed by this signer
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
@@ -499,12 +522,12 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
-        
+
         // If not enough signatures yet, return (waiting for more signatures)
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        
+
         // If enough signatures but not queued yet, queue it
         if (withdrawalQueue[proposalId].queuedAt == 0) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
@@ -513,30 +536,42 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
                 queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(usdc), amount, block.timestamp + TIMELOCK_DURATION);
+            emit WithdrawalQueued(
+                proposalId,
+                address(usdc),
+                amount,
+                block.timestamp + TIMELOCK_DURATION
+            );
             return;
         }
-        
+
         // Execute withdrawal if timelock has passed
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
+        require(
+            block.timestamp >= queue.queuedAt + TIMELOCK_DURATION,
+            "Presale: Timelock not expired"
+        );
         require(!queue.executed, "Presale: Already executed");
-        
+
         queue.executed = true;
-        SafeERC20.safeTransfer(IERC20(address(usdc)), mainDepositWallet, amount);
+        SafeERC20.safeTransfer(
+            IERC20(address(usdc)),
+            mainDepositWallet,
+            amount
+        );
 
         emit USDCWithdrawn(amount);
         emit WithdrawalExecuted(proposalId, address(usdc), amount);
     }
 
-    function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
+    function withdrawDAI(uint256 amount, bytes32 nonce) external onlySigner {
         require(
-            real.balanceOf(address(this)) >= amount,
-            "Presale: Not enough REAL in contract"
+            dai.balanceOf(address(this)) >= amount,
+            "Presale: Not enough DAI in contract"
         );
-        
-        bytes32 proposalId = getProposalId(address(real), amount, nonce);
-        
+
+        bytes32 proposalId = getProposalId(address(dai), amount, nonce);
+
         // Auto-sign if not already signed by this signer
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
@@ -546,12 +581,71 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
-        
+
         // If not enough signatures yet, return (waiting for more signatures)
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        
+
+        // If enough signatures but not queued yet, queue it
+        if (withdrawalQueue[proposalId].queuedAt == 0) {
+            withdrawalQueue[proposalId] = WithdrawalQueue({
+                token: address(dai),
+                amount: amount,
+                queuedAt: block.timestamp,
+                executed: false
+            });
+            emit WithdrawalQueued(
+                proposalId,
+                address(dai),
+                amount,
+                block.timestamp + TIMELOCK_DURATION
+            );
+            return;
+        }
+
+        // Execute withdrawal if timelock has passed
+        WithdrawalQueue storage queue = withdrawalQueue[proposalId];
+        require(
+            block.timestamp >= queue.queuedAt + TIMELOCK_DURATION,
+            "Presale: Timelock not expired"
+        );
+        require(!queue.executed, "Presale: Already executed");
+
+        queue.executed = true;
+        SafeERC20.safeTransfer(
+            IERC20(address(dai)),
+            mainDepositWallet,
+            amount
+        );
+
+        emit DAIWithdrawn(amount);
+        emit WithdrawalExecuted(proposalId, address(dai), amount);
+    }
+
+    function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
+        require(
+            real.balanceOf(address(this)) >= amount,
+            "Presale: Not enough REAL in contract"
+        );
+
+        bytes32 proposalId = getProposalId(address(real), amount, nonce);
+
+        // Auto-sign if not already signed by this signer
+        if (!proposalSignatures[proposalId][msg.sender]) {
+            proposalSignatures[proposalId][msg.sender] = true;
+            proposalSignatureCount[proposalId]++;
+            if (proposalCreatedAt[proposalId] == 0) {
+                proposalCreatedAt[proposalId] = block.timestamp;
+            }
+            emit ProposalSigned(proposalId, msg.sender);
+        }
+
+        // If not enough signatures yet, return (waiting for more signatures)
+        if (!hasRequiredSignatures(proposalId)) {
+            return;
+        }
+
         // If enough signatures but not queued yet, queue it
         if (withdrawalQueue[proposalId].queuedAt == 0) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
@@ -560,17 +654,29 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
                 queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(real), amount, block.timestamp + TIMELOCK_DURATION);
+            emit WithdrawalQueued(
+                proposalId,
+                address(real),
+                amount,
+                block.timestamp + TIMELOCK_DURATION
+            );
             return;
         }
-        
+
         // Execute withdrawal if timelock has passed
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
+        require(
+            block.timestamp >= queue.queuedAt + TIMELOCK_DURATION,
+            "Presale: Timelock not expired"
+        );
         require(!queue.executed, "Presale: Already executed");
-        
+
         queue.executed = true;
-        SafeERC20.safeTransfer(IERC20(address(real)), mainDepositWallet, amount);
+        SafeERC20.safeTransfer(
+            IERC20(address(real)),
+            mainDepositWallet,
+            amount
+        );
 
         emit REALWithdrawn(amount);
         emit WithdrawalExecuted(proposalId, address(real), amount);
