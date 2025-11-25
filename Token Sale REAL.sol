@@ -140,7 +140,8 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         address _ethUsdPriceFeed,
         address _daiUsdPriceFeed,
         address _usdtUsdPriceFeed,
-        address _usdcUsdPriceFeed
+        address _usdcUsdPriceFeed,
+        address[5] memory _signers
     ) {
         priceFeed = AggregatorV3Interface(_ethUsdPriceFeed);
         daiUsdPriceFeed = AggregatorV3Interface(_daiUsdPriceFeed);
@@ -154,11 +155,11 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         hardcap = _hardcap;
         mainDepositWallet = _mainDepositWallet;
 
-        signers[0] = 0x4106E21F155383DfB947b44e2A846405Cd7837A6; // Creator Wallet
-        signers[1] = 0x2438d494751cFeB9551342be64D3F7C645975067; // Acquisitions Wallet
-        signers[2] = 0xeCCb924aFec718a2cB0a4546D6569c9E4F825177; // Org Operations Wallet
-        signers[3] = 0xBc3B0Bdead411d8034b6DAC49e2e666dA8779D16; // Org Development Wallet
-        signers[4] = 0x6C62EE2e74F5B80b83652E5aA4d6Cd4D8F99A583; // Liquidity Pool Wallet
+        require(_signers.length == 5, "Presale: Must provide exactly 5 signers");
+        for (uint256 i = 0; i < 5; i++) {
+            require(_signers[i] != address(0), "Presale: Signer cannot be zero address");
+            signers[i] = _signers[i];
+        }
     }
 
     function getOraclePrice(AggregatorV3Interface _oracle) internal view returns (uint256, uint256) {
