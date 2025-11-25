@@ -84,8 +84,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     event WithdrawalQueued(bytes32 indexed proposalId, address indexed token, uint256 amount, uint256 executeAfter);
     event WithdrawalExecuted(bytes32 indexed proposalId, address indexed token, uint256 amount);
     event ProposalSigned(bytes32 indexed proposalId, address indexed signer);
-    event HardcapSet(uint256 newHardcap, address indexed setter);
-    event ICODurationSet(uint64 newDuration, address indexed setter);
 
     // REAL 0x325Aa344761c19F7ab6dc45A95f01d6907A30DCA
     // USDT 0xdAC17F958D2ee523a2206206994597C13D831ec7
@@ -513,12 +511,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
 
     function setHardcap(uint256 _hardcap) public onlySigner {
         hardcap = _hardcap;
-        emit HardcapSet(_hardcap, msg.sender);
     }
 
     function setICODuration(uint64 _icoDuration) public onlySigner {
         icoDuration = _icoDuration;
-        emit ICODurationSet(_icoDuration, msg.sender);
     }
 
     function getLatestETHPrice() public view returns (uint256, uint256) {
