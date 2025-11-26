@@ -27,6 +27,8 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     AggregatorV3Interface internal usdtUsdPriceFeed;
     AggregatorV3Interface internal usdcUsdPriceFeed;
 
+    uint256 public stableSlippageBps = 100; // 1% slippage allowed
+
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant TIMELOCK_DURATION = 7 days;
@@ -84,6 +86,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     event WithdrawalQueued(bytes32 indexed proposalId, address indexed token, uint256 amount, uint256 executeAfter);
     event WithdrawalExecuted(bytes32 indexed proposalId, address indexed token, uint256 amount);
     event ProposalSigned(bytes32 indexed proposalId, address indexed signer);
+    event StableSlippageBpsSet(uint256 newBps, address indexed setter);
 
     // REAL 0x325Aa344761c19F7ab6dc45A95f01d6907A30DCA
     // USDT 0xdAC17F958D2ee523a2206206994597C13D831ec7
@@ -172,8 +175,11 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
 
     function validateStableOracleNearOne(AggregatorV3Interface _oracle) internal view returns (uint256, uint256) {
         (uint256 price, uint256 _updatedAt) = getOraclePrice(_oracle);
-        require(price == 1e18, "Stablecoin: depegged");
-        require(block.timestamp - _updatedAt < 1 hours, "Stablecoin: price stale");
+        uint256 deviation = (stableSlippageBps * 1e18) / 10000;
+        uint256 lower = 1e18 - deviation;
+        uint256 upper = 1e18 + deviation;
+        require(price >= lower && price <= upper, "Stablecoin: depegged");
+        require(block.timestamp - _updatedAt < 2 hours, "Stablecoin: price stale");
         return (price, _updatedAt);
     }
 
@@ -231,7 +237,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
 
         (uint256 ethUsdPrice, uint256 _updatedAt) = getLatestETHPrice();
         require(ethUsdPrice > 0, "Invalid price feed data");
-        require(block.timestamp - _updatedAt < 1 hours, "Stale price");
+        require(block.timestamp - _updatedAt < 2 hours, "Stale price");
 
         uint256 buyAmount = (msg.value * ethUsdPrice) / (stage.price * 10 ** real.decimals());
         require(buyAmount > 0, "Insufficient amount to purchase at current price");
@@ -518,6 +524,12 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         icoDuration = _icoDuration;
     }
 
+    function setStableSlippageBps(uint256 _bps) external onlySigner {
+        require(_bps <= 1000, "Slippage too high"); // Max 10% allowed
+        stableSlippageBps = _bps;
+        emit StableSlippageBpsSet(_bps, msg.sender);
+    }
+
     function getLatestETHPrice() public view returns (uint256, uint256) {
         (, int256 price, , uint256 _updatedAt, ) = priceFeed.latestRoundData();
         require(price > 0, "oracle error");
@@ -555,4 +567,33 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             _userTotalBought += userBought[i][user];
         }
     }
+
+    // View functions to check stablecoin status before purchase
+    function getUSDCPriceStatus() public view returns (uint256 price, uint256 updatedAt, bool isWithinSlippage, bool isStale) {
+        (price, updatedAt) = getOraclePrice(usdcUsdPriceFeed);
+        uint256 deviation = (stableSlippageBps * 1e18) / 10000;
+        uint256 lower = 1e18 - deviation;
+        uint256 upper = 1e18 + deviation;
+        isWithinSlippage = (price >= lower && price <= upper);
+        isStale = (block.timestamp - updatedAt >= 2 hours);
+    }
+
+    function getUSDTPriceStatus() public view returns (uint256 price, uint256 updatedAt, bool isWithinSlippage, bool isStale) {
+        (price, updatedAt) = getOraclePrice(usdtUsdPriceFeed);
+        uint256 deviation = (stableSlippageBps * 1e18) / 10000;
+        uint256 lower = 1e18 - deviation;
+        uint256 upper = 1e18 + deviation;
+        isWithinSlippage = (price >= lower && price <= upper);
+        isStale = (block.timestamp - updatedAt >= 2 hours);
+    }
+
+    function getDAIPriceStatus() public view returns (uint256 price, uint256 updatedAt, bool isWithinSlippage, bool isStale) {
+        (price, updatedAt) = getOraclePrice(daiUsdPriceFeed);
+        uint256 deviation = (stableSlippageBps * 1e18) / 10000;
+        uint256 lower = 1e18 - deviation;
+        uint256 upper = 1e18 + deviation;
+        isWithinSlippage = (price >= lower && price <= upper);
+        isStale = (block.timestamp - updatedAt >= 2 hours);
+    }
+    
 }
