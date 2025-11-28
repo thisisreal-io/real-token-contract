@@ -32,6 +32,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant TIMELOCK_DURATION = 7 days;
+    uint256 public constant PROPOSAL_EXPIRY = 14 days;
     address public mainDepositWallet;
 
     mapping(bytes32 => mapping(address => bool)) public proposalSignatures;
@@ -120,6 +121,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     }
 
     function signProposal(bytes32 _proposalId) external onlySigner {
+        require(!isProposalExpired(_proposalId), "Presale: Proposal expired");
         require(!proposalSignatures[_proposalId][msg.sender], "Presale: Already signed");
         proposalSignatures[_proposalId][msg.sender] = true;
         proposalSignatureCount[_proposalId]++;
@@ -131,6 +133,13 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
 
     function hasRequiredSignatures(bytes32 _proposalId) public view returns (bool) {
         return proposalSignatureCount[_proposalId] >= REQUIRED_SIGNATURES;
+    }
+
+    function isProposalExpired(bytes32 _proposalId) public view returns (bool) {
+        if (proposalCreatedAt[_proposalId] == 0) {
+            return false;
+        }
+        return block.timestamp > proposalCreatedAt[_proposalId] + PROPOSAL_EXPIRY;
     }
 
     constructor(
@@ -335,6 +344,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         require(address(this).balance >= amount, "Presale: Not enough ETH in contract");
         bytes32 proposalId = getProposalId(address(0), amount, nonce);
 
+        if (proposalCreatedAt[proposalId] > 0) {
+            require(!isProposalExpired(proposalId), "Presale: Proposal expired");
+        }
+
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
             proposalSignatureCount[proposalId]++;
@@ -357,6 +370,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
+        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
         require(!queue.executed, "Presale: Already executed");
 
@@ -371,6 +385,11 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     function withdrawUSDT(uint256 amount, bytes32 nonce) external onlySigner {
         require(usdt.balanceOf(address(this)) >= amount, "Presale: Not enough USDT in contract");
         bytes32 proposalId = getProposalId(address(usdt), amount, nonce);
+        
+        if (proposalCreatedAt[proposalId] > 0) {
+            require(!isProposalExpired(proposalId), "Presale: Proposal expired");
+        }
+
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
             proposalSignatureCount[proposalId]++;
@@ -393,6 +412,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
+        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
         require(!queue.executed, "Presale: Already executed");
 
@@ -406,6 +426,11 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     function withdrawUSDC(uint256 amount, bytes32 nonce) external onlySigner {
         require(usdc.balanceOf(address(this)) >= amount, "Presale: Not enough USDC in contract");
         bytes32 proposalId = getProposalId(address(usdc), amount, nonce);
+        
+        if (proposalCreatedAt[proposalId] > 0) {
+            require(!isProposalExpired(proposalId), "Presale: Proposal expired");
+        }
+
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
             proposalSignatureCount[proposalId]++;
@@ -428,6 +453,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
+        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
         require(!queue.executed, "Presale: Already executed");
 
@@ -441,6 +467,11 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     function withdrawDAI(uint256 amount, bytes32 nonce) external onlySigner {
         require(dai.balanceOf(address(this)) >= amount, "Presale: Not enough DAI in contract");
         bytes32 proposalId = getProposalId(address(dai), amount, nonce);
+        
+        if (proposalCreatedAt[proposalId] > 0) {
+            require(!isProposalExpired(proposalId), "Presale: Proposal expired");
+        }
+
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
             proposalSignatureCount[proposalId]++;
@@ -463,6 +494,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
+        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
         require(!queue.executed, "Presale: Already executed");
 
@@ -476,6 +508,11 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
         require(real.balanceOf(address(this)) >= amount, "Presale: Not enough REAL in contract");
         bytes32 proposalId = getProposalId(address(real), amount, nonce);
+        
+        if (proposalCreatedAt[proposalId] > 0) {
+            require(!isProposalExpired(proposalId), "Presale: Proposal expired");
+        }
+
         if (!proposalSignatures[proposalId][msg.sender]) {
             proposalSignatures[proposalId][msg.sender] = true;
             proposalSignatureCount[proposalId]++;
@@ -498,6 +535,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         WithdrawalQueue storage queue = withdrawalQueue[proposalId];
+        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
         require(!queue.executed, "Presale: Already executed");
 
@@ -529,6 +567,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         stableSlippageBps = _bps;
         emit StableSlippageBpsSet(_bps, msg.sender);
     }
+
 
     function getLatestETHPrice() public view returns (uint256, uint256) {
         (, int256 price, , uint256 _updatedAt, ) = priceFeed.latestRoundData();
