@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 // Real Estate Alliance League, Illinois, USA
 // Free Token Smart Contract: 5,000 REAL @ $0 each. 
 // Promo is while supplyies last OR until end date.  Please see thisisreal.io for details including END DATE.

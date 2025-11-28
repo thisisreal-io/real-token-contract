@@ -222,20 +222,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         emit StageCreated(uint32(stages.length - 1), _timeToStart, _timeToEnd, _price);
     }
 
-    function updateStage(uint32 _stageId, uint64 _timeToStart, uint64 _timeToEnd, uint256 _price)
-        external onlySigner validStage(_stageId)
-    {
-        require(_price > 0, "Presale: Invalid price");
-        require(_timeToEnd > block.timestamp, "Presale: End time must be in future");
-        require(_timeToEnd > _timeToStart, "Presale: End time must be after start time");
-        Stage storage stage = stages[_stageId];
-        stage.timeToStart = _timeToStart;
-        stage.timeToEnd = _timeToEnd;
-        stage.price = _price;
-
-        emit StageUpdated(_stageId, _timeToStart, _timeToEnd, _price);
-    }
-
     function buyREALWithETH(uint32 _stageId)
         external payable whenNotPaused nonReentrant validStage(_stageId)
     {
@@ -552,14 +538,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
 
     function unpause() public whenPaused onlySigner {
         _unpause();
-    }
-
-    function setHardcap(uint256 _hardcap) public onlySigner {
-        hardcap = _hardcap;
-    }
-
-    function setICODuration(uint64 _icoDuration) public onlySigner {
-        icoDuration = _icoDuration;
     }
 
     function setStableSlippageBps(uint256 _bps) external onlySigner {
