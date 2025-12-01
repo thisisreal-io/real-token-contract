@@ -35,9 +35,8 @@ contract Real_Estate_Alliance_League is ERC20, ERC20Burnable, Ownable {
 	    mint(address4, 2000000 * 10 ** 18);
         mint(address5, 900000 * 10 ** 18);
         mint(address6, 900000 * 10 ** 18);
-	    mint(address7, 500000 * 10 ** 18);
+        mint(address7, 500000 * 10 ** 18);
         mint(address8, 500000 * 10 ** 18);
-        mintedSupply = PRE_MINTED_SUPPLY;
     }
 
 
