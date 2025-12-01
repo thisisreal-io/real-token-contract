@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+
 // Real Estate Alliance League, Illinois, USA
 // Free Token Smart Contract: 5,000 REAL @ $0 each. 
 // Promo is while supplyies last OR until end date.  Please see thisisreal.io for details including END DATE.
@@ -9,6 +10,7 @@
 // Real Estate Educational Platform with DAO
 // Tokenomics Maximum Supply 100,000,000  /  Initial Circulating Supply is 21,000,000
 // See Token Details at our website ThisIsREAL.io including token supply dispursement and vesting schedules.
+
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -75,9 +77,9 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
 
     // method `setHARDCAP`
     // @dev - for testing purpose only
-    function setHARDCAP(uint256 hardcap) public onlyOwner {
-        HARDCAP = hardcap;
-    }
+    // function setHARDCAP(uint256 hardcap) public onlyOwner {
+    //     HARDCAP = hardcap;
+    // }
 
     function withdrawREAL(uint256 amount) external onlyOwner {
         require(
