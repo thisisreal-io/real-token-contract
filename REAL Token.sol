@@ -12,7 +12,6 @@ import {ERC20} from "@openzeppelin/contracts@5.2.0/token/ERC20/ERC20.sol";
 import {ERC20Burnable} from "@openzeppelin/contracts@5.2.0/token/ERC20/extensions/ERC20Burnable.sol";
 import {Ownable} from "@openzeppelin/contracts@5.2.0/access/Ownable.sol";
 
-
 contract Real_Estate_Alliance_League is ERC20, ERC20Burnable, Ownable {
     uint256 public constant MAX_SUPPLY = 100000000 * 10 ** 18;
     uint256 public constant PRE_MINTED_SUPPLY = 21000000 * 10 ** 18;
@@ -38,7 +37,6 @@ contract Real_Estate_Alliance_League is ERC20, ERC20Burnable, Ownable {
         mint(address7, 500000 * 10 ** 18);
         mint(address8, 500000 * 10 ** 18);
     }
-
 
     function mint(address to, uint256 amount) public onlyOwner {
     require(mintedSupply + amount <= MAX_SUPPLY, "Exceeds max supply");
