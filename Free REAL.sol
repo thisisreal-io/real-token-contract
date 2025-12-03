@@ -20,7 +20,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
-    uint256 public HARDCAP;
+    uint256 public hardcap;
     uint256 public totalClaimed;
     uint256 claimableAmt;
     IERC20 public real;
@@ -68,7 +68,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     ) Ownable(msg.sender) {
         real = IERC20(_real);
         claimableAmt = _claimableAmt;
-        HARDCAP = _hardCAP;
+        hardcap = _hardCAP;
         mainDepositWallet = _mainDepositWallet;
         
         require(_signers.length == 5, "FreeREAL: Must provide exactly 5 signers");
@@ -125,7 +125,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         require(_amount > 0, "No ETH balance!");
 
         require(claimableAmt > 0, "Set claimable amount");
-        require(totalClaimed + claimableAmt <= HARDCAP, "Claim exceeds hard cap");
+        require(totalClaimed + claimableAmt <= hardcap, "Claim exceeds hard cap");
 
         totalClaimed += claimableAmt;
         userClaimed[msg.sender] = true;
