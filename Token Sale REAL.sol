@@ -32,7 +32,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant PROPOSAL_EXPIRY = 14 days;
-    uint256 public constant WITHDRAWAL_TIMELOCK = 7 days;
+    uint256 public constant WITHDRAWAL_TIMELOCK = 7 minutes;
     address public mainDepositWallet;
 
     mapping(bytes32 => mapping(address => bool)) public proposalSignatures;
@@ -118,21 +118,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
 
     function getProposalId(address _token, uint256 _amount, bytes32 _nonce) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(_token, _amount, _nonce));
-    }
-
-    function signProposal(bytes32 _proposalId) external onlySigner {
-        require(!isProposalExpired(_proposalId), "Presale: Proposal expired");
-        require(!proposalSignatures[_proposalId][msg.sender], "Presale: Already signed");
-        proposalSignatures[_proposalId][msg.sender] = true;
-        proposalSignatureCount[_proposalId]++;
-        if (proposalCreatedAt[_proposalId] == 0) {
-            proposalCreatedAt[_proposalId] = block.timestamp;
-        }
-        // Set timelock start when required signatures are reached
-        if (hasRequiredSignatures(_proposalId) && proposalTimelockStart[_proposalId] == 0) {
-            proposalTimelockStart[_proposalId] = block.timestamp;
-        }
-        emit ProposalSigned(_proposalId, msg.sender);
     }
 
     function hasRequiredSignatures(bytes32 _proposalId) public view returns (bool) {

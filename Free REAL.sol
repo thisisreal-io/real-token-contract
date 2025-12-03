@@ -91,17 +91,6 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         return keccak256(abi.encodePacked(_amount, _nonce));
     }
 
-    function signProposal(bytes32 _proposalId) external onlySigner {
-        require(!isProposalExpired(_proposalId), "FreeREAL: Proposal expired");
-        require(!proposalSignatures[_proposalId][msg.sender], "FreeREAL: Already signed");
-        proposalSignatures[_proposalId][msg.sender] = true;
-        proposalSignatureCount[_proposalId]++;
-        if (proposalCreatedAt[_proposalId] == 0) {
-            proposalCreatedAt[_proposalId] = block.timestamp;
-        }
-        emit ProposalSigned(_proposalId, msg.sender);
-    }
-
     function hasRequiredSignatures(bytes32 _proposalId) public view returns (bool) {
         return proposalSignatureCount[_proposalId] >= REQUIRED_SIGNATURES;
     }
