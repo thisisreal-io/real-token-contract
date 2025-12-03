@@ -27,6 +27,22 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
 
     mapping(address => bool) public userClaimed;
 
+    // Multisig infrastructure
+    address[5] public signers;
+    uint256 public constant REQUIRED_SIGNATURES = 3;
+    uint256 public constant PROPOSAL_EXPIRY = 14 days;
+    address public mainDepositWallet;
+
+    mapping(bytes32 => mapping(address => bool)) public proposalSignatures;
+    mapping(bytes32 => uint256) public proposalSignatureCount;
+    mapping(bytes32 => uint256) public proposalCreatedAt;
+
+    struct WithdrawalQueue {
+        uint256 amount;
+        bool executed;
+    }
+    mapping(bytes32 => WithdrawalQueue) public withdrawalQueue;
+
     event REALClaimed(
         address indexed _user,
         uint256 _amount,
@@ -34,15 +50,67 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     );
 
     event REALWithdrawn(uint256 _amount);
+    event WithdrawalQueued(bytes32 indexed proposalId, uint256 amount);
+    event WithdrawalExecuted(bytes32 indexed proposalId, uint256 amount);
+    event ProposalSigned(bytes32 indexed proposalId, address indexed signer);
+
+    modifier onlySigner() {
+        require(isSigner(msg.sender), "FreeREAL: Not a signer");
+        _;
+    }
 
     constructor(
         address _real,
         uint256 _claimableAmt,
-        uint256 _hardCAP
+        uint256 _hardCAP,
+        address _mainDepositWallet,
+        address[5] memory _signers
     ) Ownable(msg.sender) {
         real = IERC20(_real);
         claimableAmt = _claimableAmt;
         HARDCAP = _hardCAP;
+        mainDepositWallet = _mainDepositWallet;
+        
+        require(_signers.length == 5, "FreeREAL: Must provide exactly 5 signers");
+        for (uint256 i = 0; i < 5; i++) {
+            require(_signers[i] != address(0), "FreeREAL: Signer cannot be zero address");
+            signers[i] = _signers[i];
+        }
+    }
+
+    function isSigner(address _address) public view returns (bool) {
+        for (uint256 i = 0; i < signers.length; i++) {
+            if (signers[i] == _address) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function getProposalId(uint256 _amount, bytes32 _nonce) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(_amount, _nonce));
+    }
+
+    function signProposal(bytes32 _proposalId) external onlySigner {
+        require(!isProposalExpired(_proposalId), "FreeREAL: Proposal expired");
+        require(!proposalSignatures[_proposalId][msg.sender], "FreeREAL: Already signed");
+        proposalSignatures[_proposalId][msg.sender] = true;
+        proposalSignatureCount[_proposalId]++;
+        if (proposalCreatedAt[_proposalId] == 0) {
+            proposalCreatedAt[_proposalId] = block.timestamp;
+        }
+        emit ProposalSigned(_proposalId, msg.sender);
+    }
+
+    function hasRequiredSignatures(bytes32 _proposalId) public view returns (bool) {
+        return proposalSignatureCount[_proposalId] >= REQUIRED_SIGNATURES;
+    }
+
+    function isProposalExpired(bytes32 _proposalId) public view returns (bool) {
+        if (proposalCreatedAt[_proposalId] == 0) {
+            return false;
+        }
+        return block.timestamp > proposalCreatedAt[_proposalId] + PROPOSAL_EXPIRY;
     }
 
     function claimREAL() external whenNotPaused nonReentrant {
@@ -57,7 +125,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         require(_amount > 0, "No ETH balance!");
 
         require(claimableAmt > 0, "Set claimable amount");
-        require(totalClaimed < HARDCAP, "Hardcap reached");
+        require(totalClaimed + claimableAmt <= HARDCAP, "Claim exceeds hard cap");
 
         totalClaimed += claimableAmt;
         userClaimed[msg.sender] = true;
@@ -67,27 +135,48 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         emit REALClaimed(msg.sender, claimableAmt, block.timestamp);
     }
 
-    function pause() public whenNotPaused onlyOwner {
+    function pause() external whenNotPaused onlySigner {
         _pause();
     }
 
-    function unpause() public whenPaused onlyOwner {
+    function unpause() external whenPaused onlySigner {
         _unpause();
     }
 
-    // method `setHARDCAP`
-    // @dev - for testing purpose only
-    // function setHARDCAP(uint256 hardcap) public onlyOwner {
-    //     HARDCAP = hardcap;
-    // }
-
-    function withdrawREAL(uint256 amount) external onlyOwner {
+    function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
         require(
             real.balanceOf(address(this)) >= amount,
-            "Not enough REAL in contract"
+            "FreeREAL: Not enough REAL in contract"
         );
-        SafeERC20.safeTransfer(IERC20(address(real)), msg.sender, amount);
+        bytes32 proposalId = getProposalId(amount, nonce);
 
-        emit REALWithdrawn(amount);
+        if (proposalCreatedAt[proposalId] > 0) {
+            require(!isProposalExpired(proposalId), "FreeREAL: Proposal expired");
+        }
+
+        if (!proposalSignatures[proposalId][msg.sender]) {
+            proposalSignatures[proposalId][msg.sender] = true;
+            proposalSignatureCount[proposalId]++;
+            if (proposalCreatedAt[proposalId] == 0) {
+                proposalCreatedAt[proposalId] = block.timestamp;
+            }
+            emit ProposalSigned(proposalId, msg.sender);
+        }
+        if (!hasRequiredSignatures(proposalId)) {
+            return;
+        }
+        if (!withdrawalQueue[proposalId].executed) {
+            withdrawalQueue[proposalId] = WithdrawalQueue({
+                amount: amount,
+                executed: false
+            });
+            emit WithdrawalQueued(proposalId, amount);
+            
+            // Automatically transfer to main deposit wallet when queued
+            SafeERC20.safeTransfer(IERC20(address(real)), mainDepositWallet, amount);
+            withdrawalQueue[proposalId].executed = true;
+            emit REALWithdrawn(amount);
+            emit WithdrawalExecuted(proposalId, amount);
+        }
     }
 }

@@ -31,7 +31,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
 
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
-    uint256 public constant TIMELOCK_DURATION = 7 days;
     uint256 public constant PROPOSAL_EXPIRY = 14 days;
     address public mainDepositWallet;
 
@@ -42,7 +41,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     struct WithdrawalQueue {
         address token;
         uint256 amount;
-        uint256 queuedAt;
         bool executed;
     }
     mapping(bytes32 => WithdrawalQueue) public withdrawalQueue;
@@ -84,7 +82,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     event USDCWithdrawn(uint256 _amount);
     event DAIWithdrawn(uint256 _amount);
     event REALWithdrawn(uint256 _amount);
-    event WithdrawalQueued(bytes32 indexed proposalId, address indexed token, uint256 amount, uint256 executeAfter);
+    event WithdrawalQueued(bytes32 indexed proposalId, address indexed token, uint256 amount);
     event WithdrawalExecuted(bytes32 indexed proposalId, address indexed token, uint256 amount);
     event ProposalSigned(bytes32 indexed proposalId, address indexed signer);
     event StableSlippageBpsSet(uint256 newBps, address indexed setter);
@@ -361,27 +359,21 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        if (withdrawalQueue[proposalId].queuedAt == 0) {
+        if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(0),
                 amount: amount,
-                queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(0), amount, block.timestamp + TIMELOCK_DURATION);
-            return;
+            emit WithdrawalQueued(proposalId, address(0), amount);
+            
+            // Automatically transfer to main deposit wallet when queued
+            (bool success, ) = payable(mainDepositWallet).call{value: amount}("");
+            require(success, "Presale: ETH transfer failed");
+            withdrawalQueue[proposalId].executed = true;
+            emit ETHWithdrawn(amount);
+            emit WithdrawalExecuted(proposalId, address(0), amount);
         }
-        WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
-        require(!queue.executed, "Presale: Already executed");
-
-        queue.executed = true;
-        (bool success, ) = payable(mainDepositWallet).call{value: amount}("");
-        require(success, "Presale: ETH transfer failed");
-
-        emit ETHWithdrawn(amount);
-        emit WithdrawalExecuted(proposalId, address(0), amount);
     }
 
     function withdrawUSDT(uint256 amount, bytes32 nonce) external onlySigner {
@@ -403,26 +395,20 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        if (withdrawalQueue[proposalId].queuedAt == 0) {
+        if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdt),
                 amount: amount,
-                queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(usdt), amount, block.timestamp + TIMELOCK_DURATION);
-            return;
+            emit WithdrawalQueued(proposalId, address(usdt), amount);
+            
+            // Automatically transfer to main deposit wallet when queued
+            SafeERC20.safeTransfer(IERC20(address(usdt)), mainDepositWallet, amount);
+            withdrawalQueue[proposalId].executed = true;
+            emit USDTWithdrawn(amount);
+            emit WithdrawalExecuted(proposalId, address(usdt), amount);
         }
-        WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
-        require(!queue.executed, "Presale: Already executed");
-
-        queue.executed = true;
-        SafeERC20.safeTransfer(IERC20(address(usdt)), mainDepositWallet, amount);
-
-        emit USDTWithdrawn(amount);
-        emit WithdrawalExecuted(proposalId, address(usdt), amount);
     }
 
     function withdrawUSDC(uint256 amount, bytes32 nonce) external onlySigner {
@@ -444,26 +430,20 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        if (withdrawalQueue[proposalId].queuedAt == 0) {
+        if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdc),
                 amount: amount,
-                queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(usdc), amount, block.timestamp + TIMELOCK_DURATION);
-            return;
+            emit WithdrawalQueued(proposalId, address(usdc), amount);
+            
+            // Automatically transfer to main deposit wallet when queued
+            SafeERC20.safeTransfer(IERC20(address(usdc)), mainDepositWallet, amount);
+            withdrawalQueue[proposalId].executed = true;
+            emit USDCWithdrawn(amount);
+            emit WithdrawalExecuted(proposalId, address(usdc), amount);
         }
-        WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
-        require(!queue.executed, "Presale: Already executed");
-
-        queue.executed = true;
-        SafeERC20.safeTransfer(IERC20(address(usdc)), mainDepositWallet, amount);
-
-        emit USDCWithdrawn(amount);
-        emit WithdrawalExecuted(proposalId, address(usdc), amount);
     }
 
     function withdrawDAI(uint256 amount, bytes32 nonce) external onlySigner {
@@ -485,26 +465,20 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        if (withdrawalQueue[proposalId].queuedAt == 0) {
+        if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(dai),
                 amount: amount,
-                queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(dai), amount, block.timestamp + TIMELOCK_DURATION);
-            return;
+            emit WithdrawalQueued(proposalId, address(dai), amount);
+            
+            // Automatically transfer to main deposit wallet when queued
+            SafeERC20.safeTransfer(IERC20(address(dai)), mainDepositWallet, amount);
+            withdrawalQueue[proposalId].executed = true;
+            emit DAIWithdrawn(amount);
+            emit WithdrawalExecuted(proposalId, address(dai), amount);
         }
-        WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
-        require(!queue.executed, "Presale: Already executed");
-
-        queue.executed = true;
-        SafeERC20.safeTransfer(IERC20(address(dai)), mainDepositWallet, amount);
-
-        emit DAIWithdrawn(amount);
-        emit WithdrawalExecuted(proposalId, address(dai), amount);
     }
 
     function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
@@ -526,26 +500,20 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        if (withdrawalQueue[proposalId].queuedAt == 0) {
+        if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(real),
                 amount: amount,
-                queuedAt: block.timestamp,
                 executed: false
             });
-            emit WithdrawalQueued(proposalId, address(real), amount, block.timestamp + TIMELOCK_DURATION);
-            return;
+            emit WithdrawalQueued(proposalId, address(real), amount);
+            
+            // Automatically transfer to main deposit wallet when queued
+            SafeERC20.safeTransfer(IERC20(address(real)), mainDepositWallet, amount);
+            withdrawalQueue[proposalId].executed = true;
+            emit REALWithdrawn(amount);
+            emit WithdrawalExecuted(proposalId, address(real), amount);
         }
-        WithdrawalQueue storage queue = withdrawalQueue[proposalId];
-        require(!isProposalExpired(proposalId), "Presale: Proposal expired");
-        require(block.timestamp >= queue.queuedAt + TIMELOCK_DURATION, "Presale: Timelock not expired");
-        require(!queue.executed, "Presale: Already executed");
-
-        queue.executed = true;
-        SafeERC20.safeTransfer(IERC20(address(real)), mainDepositWallet, amount);
-
-        emit REALWithdrawn(amount);
-        emit WithdrawalExecuted(proposalId, address(real), amount);
     }
 
     function pause() public whenNotPaused onlySigner {
@@ -600,33 +568,5 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             _userTotalBought += userBought[i][user];
         }
     }
-
-    // View functions to check stablecoin status before purchase
-    function getUSDCPriceStatus() public view returns (uint256 price, uint256 updatedAt, bool isWithinSlippage, bool isStale) {
-        (price, updatedAt) = getOraclePrice(usdcUsdPriceFeed);
-        uint256 deviation = (stableSlippageBps * 1e18) / 10000;
-        uint256 lower = 1e18 - deviation;
-        uint256 upper = 1e18 + deviation;
-        isWithinSlippage = (price >= lower && price <= upper);
-        isStale = (block.timestamp - updatedAt >= 2 hours);
-    }
-
-    function getUSDTPriceStatus() public view returns (uint256 price, uint256 updatedAt, bool isWithinSlippage, bool isStale) {
-        (price, updatedAt) = getOraclePrice(usdtUsdPriceFeed);
-        uint256 deviation = (stableSlippageBps * 1e18) / 10000;
-        uint256 lower = 1e18 - deviation;
-        uint256 upper = 1e18 + deviation;
-        isWithinSlippage = (price >= lower && price <= upper);
-        isStale = (block.timestamp - updatedAt >= 2 hours);
-    }
-
-    function getDAIPriceStatus() public view returns (uint256 price, uint256 updatedAt, bool isWithinSlippage, bool isStale) {
-        (price, updatedAt) = getOraclePrice(daiUsdPriceFeed);
-        uint256 deviation = (stableSlippageBps * 1e18) / 10000;
-        uint256 lower = 1e18 - deviation;
-        uint256 upper = 1e18 + deviation;
-        isWithinSlippage = (price >= lower && price <= upper);
-        isStale = (block.timestamp - updatedAt >= 2 hours);
-    }
-    
+ 
 }
