@@ -32,11 +32,13 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant PROPOSAL_EXPIRY = 14 days;
+    uint256 public constant WITHDRAWAL_TIMELOCK = 7 days;
     address public mainDepositWallet;
 
     mapping(bytes32 => mapping(address => bool)) public proposalSignatures;
     mapping(bytes32 => uint256) public proposalSignatureCount;
     mapping(bytes32 => uint256) public proposalCreatedAt;
+    mapping(bytes32 => uint256) public proposalTimelockStart;
 
     struct WithdrawalQueue {
         address token;
@@ -126,6 +128,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (proposalCreatedAt[_proposalId] == 0) {
             proposalCreatedAt[_proposalId] = block.timestamp;
         }
+        // Set timelock start when required signatures are reached
+        if (hasRequiredSignatures(_proposalId) && proposalTimelockStart[_proposalId] == 0) {
+            proposalTimelockStart[_proposalId] = block.timestamp;
+        }
         emit ProposalSigned(_proposalId, msg.sender);
     }
 
@@ -138,6 +144,13 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return false;
         }
         return block.timestamp > proposalCreatedAt[_proposalId] + PROPOSAL_EXPIRY;
+    }
+
+    function isTimelockPassed(bytes32 _proposalId) public view returns (bool) {
+        if (proposalTimelockStart[_proposalId] == 0) {
+            return false;
+        }
+        return block.timestamp >= proposalTimelockStart[_proposalId] + WITHDRAWAL_TIMELOCK;
     }
 
     constructor(
@@ -355,11 +368,16 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             if (proposalCreatedAt[proposalId] == 0) {
                 proposalCreatedAt[proposalId] = block.timestamp;
             }
+            // Set timelock start when required signatures are reached
+            if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
+                proposalTimelockStart[proposalId] = block.timestamp;
+            }
             emit ProposalSigned(proposalId, msg.sender);
         }
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
+        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(0),
@@ -368,7 +386,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             });
             emit WithdrawalQueued(proposalId, address(0), amount);
             
-            // Automatically transfer to main deposit wallet when queued
             (bool success, ) = payable(mainDepositWallet).call{value: amount}("");
             require(success, "Presale: ETH transfer failed");
             withdrawalQueue[proposalId].executed = true;
@@ -392,11 +409,16 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             if (proposalCreatedAt[proposalId] == 0) {
                 proposalCreatedAt[proposalId] = block.timestamp;
             }
+            // Set timelock start when required signatures are reached
+            if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
+                proposalTimelockStart[proposalId] = block.timestamp;
+            }
             emit ProposalSigned(proposalId, msg.sender);
         }
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
+        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdt),
@@ -405,7 +427,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             });
             emit WithdrawalQueued(proposalId, address(usdt), amount);
             
-            // Automatically transfer to main deposit wallet when queued
             SafeERC20.safeTransfer(IERC20(address(usdt)), mainDepositWallet, amount);
             withdrawalQueue[proposalId].executed = true;
             emit USDTWithdrawn(amount);
@@ -428,11 +449,16 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             if (proposalCreatedAt[proposalId] == 0) {
                 proposalCreatedAt[proposalId] = block.timestamp;
             }
+            // Set timelock start when required signatures are reached
+            if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
+                proposalTimelockStart[proposalId] = block.timestamp;
+            }
             emit ProposalSigned(proposalId, msg.sender);
         }
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
+        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdc),
@@ -441,7 +467,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             });
             emit WithdrawalQueued(proposalId, address(usdc), amount);
             
-            // Automatically transfer to main deposit wallet when queued
             SafeERC20.safeTransfer(IERC20(address(usdc)), mainDepositWallet, amount);
             withdrawalQueue[proposalId].executed = true;
             emit USDCWithdrawn(amount);
@@ -464,11 +489,16 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             if (proposalCreatedAt[proposalId] == 0) {
                 proposalCreatedAt[proposalId] = block.timestamp;
             }
+            // Set timelock start when required signatures are reached
+            if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
+                proposalTimelockStart[proposalId] = block.timestamp;
+            }
             emit ProposalSigned(proposalId, msg.sender);
         }
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
+        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(dai),
@@ -477,7 +507,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             });
             emit WithdrawalQueued(proposalId, address(dai), amount);
             
-            // Automatically transfer to main deposit wallet when queued
             SafeERC20.safeTransfer(IERC20(address(dai)), mainDepositWallet, amount);
             withdrawalQueue[proposalId].executed = true;
             emit DAIWithdrawn(amount);
@@ -500,11 +529,16 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             if (proposalCreatedAt[proposalId] == 0) {
                 proposalCreatedAt[proposalId] = block.timestamp;
             }
+            // Set timelock start when required signatures are reached
+            if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
+                proposalTimelockStart[proposalId] = block.timestamp;
+            }
             emit ProposalSigned(proposalId, msg.sender);
         }
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
+        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(real),
@@ -513,7 +547,6 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             });
             emit WithdrawalQueued(proposalId, address(real), amount);
             
-            // Automatically transfer to main deposit wallet when queued
             SafeERC20.safeTransfer(IERC20(address(real)), mainDepositWallet, amount);
             withdrawalQueue[proposalId].executed = true;
             emit REALWithdrawn(amount);
