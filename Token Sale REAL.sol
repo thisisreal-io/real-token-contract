@@ -341,6 +341,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     }
 
     function withdrawETH(uint256 amount, bytes32 nonce) external onlySigner {
+        require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(address(this).balance >= amount, "Presale: Not enough ETH in contract");
         bytes32 proposalId = getProposalId(address(0), amount, nonce);
 
@@ -377,6 +378,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     }
 
     function withdrawUSDT(uint256 amount, bytes32 nonce) external onlySigner {
+        require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(usdt.balanceOf(address(this)) >= amount, "Presale: Not enough USDT in contract");
         bytes32 proposalId = getProposalId(address(usdt), amount, nonce);
         
@@ -412,6 +414,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     }
 
     function withdrawUSDC(uint256 amount, bytes32 nonce) external onlySigner {
+        require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(usdc.balanceOf(address(this)) >= amount, "Presale: Not enough USDC in contract");
         bytes32 proposalId = getProposalId(address(usdc), amount, nonce);
         
@@ -447,6 +450,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     }
 
     function withdrawDAI(uint256 amount, bytes32 nonce) external onlySigner {
+        require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(dai.balanceOf(address(this)) >= amount, "Presale: Not enough DAI in contract");
         bytes32 proposalId = getProposalId(address(dai), amount, nonce);
         
@@ -482,6 +486,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     }
 
     function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
+        require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(real.balanceOf(address(this)) >= amount, "Presale: Not enough REAL in contract");
         bytes32 proposalId = getProposalId(address(real), amount, nonce);
         

@@ -144,6 +144,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     }
 
     function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
+        require(amount > 0, "FreeREAL: Withdraw amount must be greater than zero");
         require(
             real.balanceOf(address(this)) >= amount,
             "FreeREAL: Not enough REAL in contract"
