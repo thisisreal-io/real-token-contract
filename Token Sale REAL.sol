@@ -362,7 +362,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
+        // Return early if timelock hasn't passed yet
+        if (!isTimelockPassed(proposalId)) {
+            return;
+        }
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(0),
@@ -403,7 +406,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
+        // Return early if timelock hasn't passed yet
+        if (!isTimelockPassed(proposalId)) {
+            return;
+        }
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdt),
@@ -443,7 +449,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
+        // Return early if timelock hasn't passed yet
+        if (!isTimelockPassed(proposalId)) {
+            return;
+        }
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdc),
@@ -483,7 +492,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
+        // Return early if timelock hasn't passed yet
+        if (!isTimelockPassed(proposalId)) {
+            return;
+        }
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(dai),
@@ -523,7 +535,10 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
-        require(isTimelockPassed(proposalId), "Presale: Timelock not passed");
+        // Return early if timelock hasn't passed yet
+        if (!isTimelockPassed(proposalId)) {
+            return;
+        }
         if (!withdrawalQueue[proposalId].executed) {
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(real),
