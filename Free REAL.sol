@@ -18,6 +18,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     uint256 public hardcap;
@@ -26,6 +27,10 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     IERC20 public real;
 
     mapping(address => bool) public userClaimed;
+
+    // Signature verification for claims
+    address public signerAddress;
+    mapping(address => mapping(uint256 => bool)) public usedNonces;
 
     // Multisig infrastructure
     address[5] public signers;
@@ -64,12 +69,14 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         uint256 _claimableAmt,
         uint256 _hardCAP,
         address _mainDepositWallet,
-        address[5] memory _signers
+        address[5] memory _signers,
+        address _signerAddress
     ) Ownable(msg.sender) {
         real = IERC20(_real);
         claimableAmt = _claimableAmt;
         hardcap = _hardCAP;
         mainDepositWallet = _mainDepositWallet;
+        signerAddress = _signerAddress;
         
         require(_signers.length == 5, "FreeREAL: Must provide exactly 5 signers");
         for (uint256 i = 0; i < 5; i++) {
@@ -102,19 +109,61 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         return block.timestamp > proposalCreatedAt[_proposalId] + PROPOSAL_EXPIRY;
     }
 
-    function claimREAL() external whenNotPaused nonReentrant {
-        require(!userClaimed[msg.sender], "Free tokens already claimed");
+    /**
+     * @dev Reconstructs the message hash that the backend signed
+     * @param _user Address of the user claiming
+     * @param _amount Amount to claim (claimableAmt)
+     * @param _nonce Nonce for this claim
+     * @return Message hash that should be signed by backend
+     */
+    function _getMessageHash(
+        address _user,
+        uint256 _amount,
+        uint256 _nonce
+    ) internal view returns (bytes32) {
+        return
+            keccak256(
+                abi.encodePacked(
+                    "\x19Ethereum Signed Message:\n32",
+                    keccak256(
+                        abi.encodePacked(_user, _amount, _nonce, address(this))
+                    )
+                )
+            );
+    }
 
+    /**
+     * @dev Verifies that the signature was created by the backend signer
+     * @param _messageHash The message hash that was signed
+     * @param _signature The signature to verify
+     * @return True if signature is valid, false otherwise
+     */
+    function _verifySignature(
+        bytes32 _messageHash,
+        bytes memory _signature
+    ) internal view returns (bool) {
+        address recoveredSigner = ECDSA.recover(_messageHash, _signature);
+        return recoveredSigner == signerAddress;
+    }
+
+    function claimREAL(bytes memory signature, uint256 nonce) external whenNotPaused nonReentrant {
+        require(!userClaimed[msg.sender], "Free tokens already claimed");
+        require(!usedNonces[msg.sender][nonce], "FreeREAL: Nonce already used");
+        require(claimableAmt > 0, "Set claimable amount");
         require(
             real.balanceOf(address(this)) >= claimableAmt,
             "Contract have less REAL balance"
         );
-
-        uint256 _amount = address(msg.sender).balance;
-        require(_amount > 0, "No ETH balance!");
-
-        require(claimableAmt > 0, "Set claimable amount");
         require(totalClaimed + claimableAmt <= hardcap, "Claim exceeds hard cap");
+
+        // Reconstruct the message hash that backend signed
+        bytes32 messageHash = _getMessageHash(msg.sender, claimableAmt, nonce);
+        
+        // Verify the signature
+        require(_verifySignature(messageHash, signature), "FreeREAL: Invalid signature");
+
+        // Mark nonce as used to prevent replay attacks
+        usedNonces[msg.sender][nonce] = true;
 
         totalClaimed += claimableAmt;
         userClaimed[msg.sender] = true;
