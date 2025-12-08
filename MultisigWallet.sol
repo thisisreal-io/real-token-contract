@@ -132,15 +132,23 @@ contract MultisigWallet is ReentrancyGuard {
 
         // Check if proposal is ready to execute
         require(!executed[proposalId], "Already executed");
+        require(proposalCreatedAt[proposalId] > 0, "Proposal not created");
         require(proposalSignatureCount[proposalId] >= REQUIRED_SIGNATURES, "Not enough signatures");
         require(proposalTimelockStart[proposalId] > 0, "Timelock not started");
         require(block.timestamp >= proposalTimelockStart[proposalId] + TIMELOCK_DURATION, "Timelock not passed");
         require(!isProposalExpired(proposalId), "Proposal expired");
 
+        // Check balance before execution
+        if (_token == address(0)) {
+            require(address(this).balance >= _amount, "Insufficient balance");
+        } else {
+            require(IERC20(_token).balanceOf(address(this)) >= _amount, "Insufficient balance");
+        }
+
+        // Mark as executed before transfer (CEI pattern)
         executed[proposalId] = true;
 
         if (_token == address(0)) {
-            require(address(this).balance >= _amount, "Insufficient balance");
             (bool success, ) = payable(depositAddress).call{value: _amount}("");
             require(success, "Transfer failed");
         } else {
@@ -154,18 +162,64 @@ contract MultisigWallet is ReentrancyGuard {
     function withdraw(address _token, uint256 _amount, bytes32 _nonce) external onlySigner nonReentrant {
         bytes32 proposalId = getProposalId(_token, _amount, _nonce);
         
+        // Early return if already executed
+        if (executed[proposalId]) {
+            return;
+        }
+        
         // First, try to sign if not already signed
         if (!proposalSignatures[proposalId][msg.sender]) {
-            signProposal(_token, _amount, _nonce);
+            require(_amount > 0, "Amount must be greater than zero");
+            
+            // Check if proposal has expired
+            if (proposalCreatedAt[proposalId] > 0) {
+                require(!isProposalExpired(proposalId), "Proposal expired");
+            }
+            
+            // Record signature
+            proposalSignatures[proposalId][msg.sender] = true;
+            proposalSignatureCount[proposalId]++;
+            
+            if (proposalCreatedAt[proposalId] == 0) {
+                proposalCreatedAt[proposalId] = block.timestamp;
+                emit ProposalCreated(proposalId, _token, _amount, _nonce);
+            }
+            
+            emit ProposalSigned(proposalId, msg.sender);
+            
+            // Start timelock when required signatures are reached
+            if (proposalSignatureCount[proposalId] == REQUIRED_SIGNATURES && proposalTimelockStart[proposalId] == 0) {
+                proposalTimelockStart[proposalId] = block.timestamp;
+                emit TimelockStarted(proposalId, block.timestamp);
+            }
         }
         
         // Then, try to execute if conditions are met
         if (!executed[proposalId] && 
+            proposalCreatedAt[proposalId] > 0 &&
             proposalSignatureCount[proposalId] >= REQUIRED_SIGNATURES && 
             proposalTimelockStart[proposalId] > 0 &&
             block.timestamp >= proposalTimelockStart[proposalId] + TIMELOCK_DURATION &&
             !isProposalExpired(proposalId)) {
-            executeWithdrawal(_token, _amount, _nonce);
+            
+            // Check balance before execution
+            if (_token == address(0)) {
+                require(address(this).balance >= _amount, "Insufficient balance");
+            } else {
+                require(IERC20(_token).balanceOf(address(this)) >= _amount, "Insufficient balance");
+            }
+            
+            // Mark as executed before transfer (CEI pattern)
+            executed[proposalId] = true;
+            
+            if (_token == address(0)) {
+                (bool success, ) = payable(depositAddress).call{value: _amount}("");
+                require(success, "Transfer failed");
+            } else {
+                IERC20(_token).safeTransfer(depositAddress, _amount);
+            }
+            
+            emit WithdrawalExecuted(proposalId, _token, _amount);
         }
     }
 }
