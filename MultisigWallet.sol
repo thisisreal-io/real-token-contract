@@ -15,7 +15,7 @@ contract MultisigWallet is ReentrancyGuard {
 
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
-    uint256 public constant TIMELOCK_DURATION = 7 days;
+    uint256 public constant TIMELOCK_DURATION = 7 minutes;
     address public immutable depositAddress;
 
     modifier onlySigner() {
