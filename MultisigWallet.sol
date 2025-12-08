@@ -15,7 +15,6 @@ contract MultisigWallet is ReentrancyGuard {
 
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
-    uint256 public constant PROPOSAL_EXPIRY = 14 days;
     uint256 public constant TIMELOCK_DURATION = 7 days;
     address public immutable depositAddress;
 
@@ -64,13 +63,6 @@ contract MultisigWallet is ReentrancyGuard {
         return proposalSignatureCount[_proposalId] >= REQUIRED_SIGNATURES;
     }
 
-    function isProposalExpired(bytes32 _proposalId) public view returns (bool) {
-        if (proposalCreatedAt[_proposalId] == 0) {
-            return false;
-        }
-        return block.timestamp > proposalCreatedAt[_proposalId] + PROPOSAL_EXPIRY;
-    }
-
     function isTimelockPassed(bytes32 _proposalId) public view returns (bool) {
         if (proposalTimelockStart[_proposalId] == 0) {
             return false;
@@ -84,8 +76,7 @@ contract MultisigWallet is ReentrancyGuard {
         uint256 timelockStart,
         bool isExecuted,
         bool hasRequiredSigs,
-        bool timelockPassed,
-        bool expired
+        bool timelockPassed
     ) {
         return (
             proposalSignatureCount[_proposalId],
@@ -93,19 +84,13 @@ contract MultisigWallet is ReentrancyGuard {
             proposalTimelockStart[_proposalId],
             executed[_proposalId],
             hasRequiredSignatures(_proposalId),
-            isTimelockPassed(_proposalId),
-            isProposalExpired(_proposalId)
+            isTimelockPassed(_proposalId)
         );
     }
 
     function signProposal(address _token, uint256 _amount, bytes32 _nonce) public onlySigner {
         require(_amount > 0, "Amount must be greater than zero");
         bytes32 proposalId = getProposalId(_token, _amount, _nonce);
-
-        // Check if proposal has expired
-        if (proposalCreatedAt[proposalId] > 0) {
-            require(!isProposalExpired(proposalId), "Proposal expired");
-        }
 
         // Record signature if signer hasn't signed yet
         require(!proposalSignatures[proposalId][msg.sender], "Already signed");
@@ -136,7 +121,6 @@ contract MultisigWallet is ReentrancyGuard {
         require(proposalSignatureCount[proposalId] >= REQUIRED_SIGNATURES, "Not enough signatures");
         require(proposalTimelockStart[proposalId] > 0, "Timelock not started");
         require(block.timestamp >= proposalTimelockStart[proposalId] + TIMELOCK_DURATION, "Timelock not passed");
-        require(!isProposalExpired(proposalId), "Proposal expired");
 
         // Check balance before execution
         if (_token == address(0)) {
@@ -171,11 +155,6 @@ contract MultisigWallet is ReentrancyGuard {
         if (!proposalSignatures[proposalId][msg.sender]) {
             require(_amount > 0, "Amount must be greater than zero");
             
-            // Check if proposal has expired
-            if (proposalCreatedAt[proposalId] > 0) {
-                require(!isProposalExpired(proposalId), "Proposal expired");
-            }
-            
             // Record signature
             proposalSignatures[proposalId][msg.sender] = true;
             proposalSignatureCount[proposalId]++;
@@ -199,8 +178,7 @@ contract MultisigWallet is ReentrancyGuard {
             proposalCreatedAt[proposalId] > 0 &&
             proposalSignatureCount[proposalId] >= REQUIRED_SIGNATURES && 
             proposalTimelockStart[proposalId] > 0 &&
-            block.timestamp >= proposalTimelockStart[proposalId] + TIMELOCK_DURATION &&
-            !isProposalExpired(proposalId)) {
+            block.timestamp >= proposalTimelockStart[proposalId] + TIMELOCK_DURATION) {
             
             // Check balance before execution
             if (_token == address(0)) {
