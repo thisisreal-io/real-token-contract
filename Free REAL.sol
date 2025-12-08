@@ -23,14 +23,14 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     uint256 public hardcap;
     uint256 public totalClaimed;
-    uint256 claimableAmt;
+    uint256 public claimableAmt;
     IERC20 public real;
 
     mapping(address => bool) public userClaimed;
 
     // Signature verification for claims
     address public signerAddress;
-    mapping(address => mapping(uint256 => bool)) public usedNonces;
+    mapping(address => uint256) public nonces;
 
     // Multisig infrastructure
     address[5] public signers;
@@ -148,7 +148,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
 
     function claimREAL(bytes memory signature, uint256 nonce) external whenNotPaused nonReentrant {
         require(!userClaimed[msg.sender], "Free tokens already claimed");
-        require(!usedNonces[msg.sender][nonce], "FreeREAL: Nonce already used");
+        require(nonce == nonces[msg.sender], "FreeREAL: Invalid nonce");
         require(claimableAmt > 0, "Set claimable amount");
         require(
             real.balanceOf(address(this)) >= claimableAmt,
@@ -162,8 +162,8 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         // Verify the signature
         require(_verifySignature(messageHash, signature), "FreeREAL: Invalid signature");
 
-        // Mark nonce as used to prevent replay attacks
-        usedNonces[msg.sender][nonce] = true;
+        // Increment nonce for next claim (prevents replay attacks)
+        nonces[msg.sender]++;
 
         totalClaimed += claimableAmt;
         userClaimed[msg.sender] = true;
