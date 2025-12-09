@@ -12,7 +12,6 @@ import {ERC20} from "@openzeppelin/contracts@5.2.0/token/ERC20/ERC20.sol";
 import {ERC20Burnable} from "@openzeppelin/contracts@5.2.0/token/ERC20/extensions/ERC20Burnable.sol";
 import {Ownable} from "@openzeppelin/contracts@5.2.0/access/Ownable.sol";
 
-
 contract Real_Estate_Alliance_League is ERC20, ERC20Burnable, Ownable {
     uint256 public constant MAX_SUPPLY = 100000000 * 10 ** 18;
     uint256 public constant PRE_MINTED_SUPPLY = 21000000 * 10 ** 18;
@@ -29,26 +28,19 @@ contract Real_Estate_Alliance_League is ERC20, ERC20Burnable, Ownable {
         ERC20("Real Estate Alliance League", "REAL")
         Ownable(initialOwner)
     {
-        _mint(address1, 14200000 * 10 ** 18);
-        _mint(address2, 1000000 * 10 ** 18);
-        _mint(address3, 1000000 * 10 ** 18);
-	  _mint(address4, 2000000 * 10 ** 18);
-        _mint(address5, 900000 * 10 ** 18);
-        _mint(address6, 900000 * 10 ** 18);
-	  _mint(address7, 500000 * 10 ** 18);
-        _mint(address8, 500000 * 10 ** 18);
-        mintedSupply = PRE_MINTED_SUPPLY;
+        mint(address1, 14200000 * 10 ** 18);
+        mint(address2, 1000000 * 10 ** 18);
+        mint(address3, 1000000 * 10 ** 18);
+	    mint(address4, 2000000 * 10 ** 18);
+        mint(address5, 900000 * 10 ** 18);
+        mint(address6, 900000 * 10 ** 18);
+        mint(address7, 500000 * 10 ** 18);
+        mint(address8, 500000 * 10 ** 18);
     }
-    function _mint(address account, uint256 amount) internal virtual override {
-    require(mintedSupply + amount <= MAX_SUPPLY, "Exceeds max supply");
-    super._mint(account, amount);
-    mintedSupply += amount;
-    }
-
 
     function mint(address to, uint256 amount) public onlyOwner {
     require(mintedSupply + amount <= MAX_SUPPLY, "Exceeds max supply");
     _mint(to, amount);
-    mintedSupply = PRE_MINTED_SUPPLY;
+    mintedSupply += amount;
 }
 }
