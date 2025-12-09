@@ -64,25 +64,28 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         _;
     }
 
-    constructor(
-        address _real,
-        uint256 _claimableAmt,
-        uint256 _hardCAP,
-        address _mainDepositWallet,
-        address[5] memory _signers,
-        address _signerAddress
-    ) Ownable(msg.sender) {
-        real = IERC20(_real);
-        claimableAmt = _claimableAmt;
-        hardcap = _hardCAP;
-        mainDepositWallet = _mainDepositWallet;
-        signerAddress = _signerAddress;
+    constructor() Ownable(msg.sender) {
+        // REAL token mainnet address
+        real = IERC20(0x325Aa344761c19F7ab6dc45A95f01d6907A30DCA);
         
-        require(_signers.length == 5, "FreeREAL: Must provide exactly 5 signers");
-        for (uint256 i = 0; i < 5; i++) {
-            require(_signers[i] != address(0), "FreeREAL: Signer cannot be zero address");
-            signers[i] = _signers[i];
-        }
+        // Claimable amount: 1 REAL token (1 * 10^18 wei)
+        claimableAmt = 1 ether;
+        
+        // Hardcap: 5000 REAL tokens (5000 * 10^18 wei)
+        hardcap = 5000 ether;
+        
+        // Deposit Address: Org Corp Operations
+        mainDepositWallet = 0xBc3B0Bdead411d8034b6DAC49e2e666dA8779D16;
+        
+        // Signer Address: Contract Creator Wallet (for signature verification)
+        signerAddress = 0x4106E21F155383DfB947b44e2A846405Cd7837A6;
+        
+        // Multisig signers (5 addresses)
+        signers[0] = 0x4106E21F155383DfB947b44e2A846405Cd7837A6; // Contract Creator Wallet
+        signers[1] = 0x2438d494751cFeB9551342be64D3F7C645975067; // Acquisitions
+        signers[2] = 0xeCCb924aFec718a2cB0a4546D6569c9E4F825177; // Org Team Development
+        signers[3] = 0xBc3B0Bdead411d8034b6DAC49e2e666dA8779D16; // Org Corp Operations
+        signers[4] = 0x6C62EE2e74F5B80b83652E5aA4d6Cd4D8F99A583; // Liquidity Pool
     }
 
     function isSigner(address _address) public view returns (bool) {
