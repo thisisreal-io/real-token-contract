@@ -78,7 +78,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         mainDepositWallet = 0xBc3B0Bdead411d8034b6DAC49e2e666dA8779D16;
         
         // Signer Address: Contract Creator Wallet (for signature verification)
-        signerAddress = 0x4106E21F155383DfB947b44e2A846405Cd7837A6;
+        signerAddress = 0x11743fe35A2BF1754F8397596AD52e3309468b69;
         
         // Multisig signers (5 addresses)
         signers[0] = 0x4106E21F155383DfB947b44e2A846405Cd7837A6; // Contract Creator Wallet
