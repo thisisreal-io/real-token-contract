@@ -44,11 +44,6 @@ contract VestingReceiptNFT is ERC721, Ownable {
         return tokenId;
     }
 
-    /**
-     * @dev Get vesting information for NFT metadata
-     * @param _tokenId NFT token ID
-     * @return vestingInfo Struct containing all vesting details
-     */
     function getVestingInfo(uint256 _tokenId) external view returns (
         address vestingAddress,
         uint256 vestingStartDate,

@@ -237,7 +237,7 @@ contract Vesting is Ownable, ReentrancyGuard {
      * @dev Get release ratio string (e.g., "3/10")
      */
     function getReleaseRatio() public view returns (string memory) {
-        return string(abi.encodePacked(maturedEvents.toString(), "/", totalEvents.toString()));
+        return string(abi.encodePacked(uint256(maturedEvents).toString(), "/", uint256(totalEvents).toString()));
     }
 
     /**
