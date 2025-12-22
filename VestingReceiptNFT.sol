@@ -90,8 +90,6 @@ contract VestingReceiptNFT is ERC721, Ownable {
     function tokenURI(uint256 _tokenId) public view override returns (string memory) {
         require(_exists(_tokenId), "Token does not exist");
         
-        address vestingAddr = vestingContract[_tokenId];
-        
         // Return a basic URI - frontend/backend should query getVestingInfo() for full details
         return string(abi.encodePacked(
             "https://thisisreal.io/api/vesting-receipt/",
