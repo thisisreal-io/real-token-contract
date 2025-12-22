@@ -29,6 +29,8 @@ contract Vesting is Ownable, ReentrancyGuard {
     EventDetail[] public eventDetails;
 
     IERC20 public token;
+    address public factory;
+    uint256 public nftTokenId;
 
     event VestingStarted(
         uint256 amount,
@@ -46,6 +48,7 @@ contract Vesting is Ownable, ReentrancyGuard {
         uint8 _vestingDuration,
         string memory _vestingMemo
     ) Ownable(_initialOwner) {
+        factory = msg.sender;
         require(
             _token != address(0),
             "Token address cannot be zero address"
@@ -65,6 +68,7 @@ contract Vesting is Ownable, ReentrancyGuard {
         vestingDuration = _vestingDuration * uint32(30 days);
         eventSpan = vestingDuration / totalEvents;
         startTime = uint32(block.timestamp);
+        // Calculate amount per event, remainder will be added to last event
         amountPerEvent = lockedFund / totalEvents;
 
         for (uint8 i = 1; i <= totalEvents; ) {
@@ -106,6 +110,7 @@ contract Vesting is Ownable, ReentrancyGuard {
     )
         external
         onlyOwner
+        nonReentrant
         returns (uint256 amountToSent, string memory evString)
     {
         require(totalEvents > maturedEvents, "Vesting completed");
@@ -138,7 +143,17 @@ contract Vesting is Ownable, ReentrancyGuard {
 
         require(_maturedEvents > 0, "No amount to unlock");
 
-        amountToSent = amountPerEvent * uint256(_maturedEvents);
+        // Calculate amount to send, handling remainder from division
+        uint256 baseAmount = amountPerEvent * uint256(_maturedEvents);
+        
+        // If this is the last unlock event, include any remainder tokens
+        if (maturedEvents + _maturedEvents == totalEvents) {
+            uint256 remainder = lockedFund - (amountPerEvent * uint256(totalEvents));
+            amountToSent = baseAmount + remainder;
+        } else {
+            amountToSent = baseAmount;
+        }
+        
         maturedEvents += _maturedEvents;
         unlockedFund += amountToSent;
 
@@ -160,5 +175,92 @@ contract Vesting is Ownable, ReentrancyGuard {
 
         emit UnlockedEvent(amountToSent, maturedEvents, block.timestamp);
         return (amountToSent, evString);
+    }
+
+    /**
+     * @dev Set NFT token ID (only callable by factory)
+     */
+    function setNFTTokenId(uint256 _nftTokenId) external {
+        require(msg.sender == factory, "Only factory can set NFT token ID");
+        require(nftTokenId == 0, "NFT token ID already set");
+        nftTokenId = _nftTokenId;
+    }
+
+    /**
+     * @dev Get current vesting balance (locked tokens remaining)
+     */
+    function getCurrentVestingBalance() public view returns (uint256) {
+        return lockedFund - unlockedFund;
+    }
+
+    /**
+     * @dev Get claimable amount (matured events that haven't been unlocked yet)
+     */
+    function getClaimableAmount() public view returns (uint256) {
+        uint8 _maturedEvents = 0;
+        uint arrayLen = eventDetails.length;
+
+        for (uint i; i < arrayLen; i++) {
+            if (eventDetails[i].eventMaturityTime <= block.timestamp) {
+                if (!eventDetails[i].unlockStatus) {
+                    _maturedEvents++;
+                }
+            }
+        }
+
+        return amountPerEvent * uint256(_maturedEvents);
+    }
+
+    /**
+     * @dev Get next release date and amount
+     */
+    function getNextReleaseInfo() public view returns (uint256 nextReleaseDate, uint256 nextReleaseAmount) {
+        uint arrayLen = eventDetails.length;
+
+        for (uint i; i < arrayLen; i++) {
+            if (eventDetails[i].eventMaturityTime > block.timestamp && !eventDetails[i].unlockStatus) {
+                nextReleaseDate = eventDetails[i].eventMaturityTime;
+                nextReleaseAmount = amountPerEvent;
+                break;
+            }
+        }
+    }
+
+    /**
+     * @dev Get vesting end date
+     */
+    function getVestingEndDate() public view returns (uint256) {
+        return startTime + vestingDuration;
+    }
+
+    /**
+     * @dev Get release ratio string (e.g., "3/10")
+     */
+    function getReleaseRatio() public view returns (string memory) {
+        return string(abi.encodePacked(maturedEvents.toString(), "/", totalEvents.toString()));
+    }
+
+    /**
+     * @dev Get all event details
+     * @return Array of EventDetail structs
+     */
+    function getAllEventDetails() public view returns (EventDetail[] memory) {
+        return eventDetails;
+    }
+
+    /**
+     * @dev Get all memos
+     * @return Array of memo strings
+     */
+    function getAllMemos() public view returns (string[] memory) {
+        return memo;
+    }
+
+    /**
+     * @dev Get remainder tokens (if any) that will be unlocked in final event
+     * @return Remainder amount
+     */
+    function getRemainderAmount() public view returns (uint256) {
+        return lockedFund - (amountPerEvent * uint256(totalEvents));
     }
 }
