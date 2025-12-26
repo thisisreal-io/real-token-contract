@@ -92,7 +92,7 @@ contract VestingReceiptNFT is ERC721, Ownable {
         
         // Return a basic URI - frontend/backend should query getVestingInfo() for full details
         return string(abi.encodePacked(
-            "https://thisisreal.io/api/vesting-receipt/",
+            "https://qa.thisisreal.io/api/vesting-receipt/",
             _tokenId.toString()
         ));
     }
