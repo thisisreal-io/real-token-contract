@@ -19,7 +19,7 @@ contract Vesting is Ownable, ReentrancyGuard {
 
     uint8 public totalEvents; // @dev unlock event range 1-10
     uint8 public maturedEvents;
-    uint32 public vestingDuration; // @dev unlock duration range 10-120 minutes
+    uint32 public vestingDuration; // @dev unlock duration range 1-120 months
     uint32 public startTime;
     uint32 public eventSpan;
     uint256 public lockedFund;
@@ -56,16 +56,16 @@ contract Vesting is Ownable, ReentrancyGuard {
         token = IERC20(_token);
         require(_totalEvents <= 10 && _totalEvents > 0, "Invalid total events");
 
-        // @dev - {_vestingDuration} must be in number of minutes. e.g. 10 ~ 10 minutes , 120 ~ 120 minutes
+        // @dev - {_vestingDuration} must be in number of months. e.g. 1 ~ 1 month , 120 ~ 120 months
 
         require(
-            _vestingDuration <= 120 && _vestingDuration >= 10,
+            _vestingDuration <= 120 && _vestingDuration >= 1,
             "Invalid vesting duration"
         );
 
         lockedFund = _vestingAmount;
         totalEvents = _totalEvents;
-        vestingDuration = _vestingDuration * uint32(1 minutes);
+        vestingDuration = _vestingDuration * uint32(30 days);
         eventSpan = vestingDuration / totalEvents;
         startTime = uint32(block.timestamp);
         // Calculate amount per event, remainder will be added to last event
