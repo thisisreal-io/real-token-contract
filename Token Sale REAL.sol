@@ -348,7 +348,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     /**
      * @dev Withdraw ETH using multisig (3-of-5) with 7-day timelock
      */
-    function withdrawETH(uint256 amount, bytes32 nonce) external onlySigner {
+    function withdrawETH(uint256 amount, bytes32 nonce) external onlySigner nonReentrant {
         require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(address(this).balance >= amount, "Presale: Not enough ETH in contract");
         bytes32 proposalId = getProposalId(address(0), amount, nonce);
@@ -379,22 +379,23 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         }
         // Execute withdrawal if not already executed
         if (!withdrawalQueue[proposalId].executed) {
+            // CEI Pattern: EFFECTS - Update state BEFORE external call
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(0),
                 amount: amount,
-                executed: false
+                executed: true  // Mark as executed BEFORE transfer
             });
             emit WithdrawalQueued(proposalId, address(0), amount);
             
+            // CEI Pattern: INTERACTIONS - External call happens LAST
             (bool success, ) = payable(mainDepositWallet).call{value: amount}("");
             require(success, "Presale: ETH transfer failed");
-            withdrawalQueue[proposalId].executed = true;
             emit ETHWithdrawn(amount);
             emit WithdrawalExecuted(proposalId, address(0), amount);
         }
     }
 
-    function withdrawUSDT(uint256 amount, bytes32 nonce) external onlySigner {
+    function withdrawUSDT(uint256 amount, bytes32 nonce) external onlySigner nonReentrant {
         require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(usdt.balanceOf(address(this)) >= amount, "Presale: Not enough USDT in contract");
         bytes32 proposalId = getProposalId(address(usdt), amount, nonce);
@@ -421,21 +422,22 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         if (!withdrawalQueue[proposalId].executed) {
+            // CEI Pattern: EFFECTS - Update state BEFORE external call
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdt),
                 amount: amount,
-                executed: false
+                executed: true  // Mark as executed BEFORE transfer
             });
             emit WithdrawalQueued(proposalId, address(usdt), amount);
             
+            // CEI Pattern: INTERACTIONS - External call happens LAST
             SafeERC20.safeTransfer(IERC20(address(usdt)), mainDepositWallet, amount);
-            withdrawalQueue[proposalId].executed = true;
             emit USDTWithdrawn(amount);
             emit WithdrawalExecuted(proposalId, address(usdt), amount);
         }
     }
 
-    function withdrawUSDC(uint256 amount, bytes32 nonce) external onlySigner {
+    function withdrawUSDC(uint256 amount, bytes32 nonce) external onlySigner nonReentrant {
         require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(usdc.balanceOf(address(this)) >= amount, "Presale: Not enough USDC in contract");
         bytes32 proposalId = getProposalId(address(usdc), amount, nonce);
@@ -462,21 +464,22 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         if (!withdrawalQueue[proposalId].executed) {
+            // CEI Pattern: EFFECTS - Update state BEFORE external call
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(usdc),
                 amount: amount,
-                executed: false
+                executed: true  // Mark as executed BEFORE transfer
             });
             emit WithdrawalQueued(proposalId, address(usdc), amount);
             
+            // CEI Pattern: INTERACTIONS - External call happens LAST
             SafeERC20.safeTransfer(IERC20(address(usdc)), mainDepositWallet, amount);
-            withdrawalQueue[proposalId].executed = true;
             emit USDCWithdrawn(amount);
             emit WithdrawalExecuted(proposalId, address(usdc), amount);
         }
     }
 
-    function withdrawDAI(uint256 amount, bytes32 nonce) external onlySigner {
+    function withdrawDAI(uint256 amount, bytes32 nonce) external onlySigner nonReentrant {
         require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(dai.balanceOf(address(this)) >= amount, "Presale: Not enough DAI in contract");
         bytes32 proposalId = getProposalId(address(dai), amount, nonce);
@@ -503,21 +506,22 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         if (!withdrawalQueue[proposalId].executed) {
+            // CEI Pattern: EFFECTS - Update state BEFORE external call
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(dai),
                 amount: amount,
-                executed: false
+                executed: true  // Mark as executed BEFORE transfer
             });
             emit WithdrawalQueued(proposalId, address(dai), amount);
             
+            // CEI Pattern: INTERACTIONS - External call happens LAST
             SafeERC20.safeTransfer(IERC20(address(dai)), mainDepositWallet, amount);
-            withdrawalQueue[proposalId].executed = true;
             emit DAIWithdrawn(amount);
             emit WithdrawalExecuted(proposalId, address(dai), amount);
         }
     }
 
-    function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
+    function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner nonReentrant {
         require(amount > 0, "Presale: Withdraw amount must be greater than zero");
         require(real.balanceOf(address(this)) >= amount, "Presale: Not enough REAL in contract");
         bytes32 proposalId = getProposalId(address(real), amount, nonce);
@@ -544,15 +548,16 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             return;
         }
         if (!withdrawalQueue[proposalId].executed) {
+            // CEI Pattern: EFFECTS - Update state BEFORE external call
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 token: address(real),
                 amount: amount,
-                executed: false
+                executed: true  // Mark as executed BEFORE transfer
             });
             emit WithdrawalQueued(proposalId, address(real), amount);
             
+            // CEI Pattern: INTERACTIONS - External call happens LAST
             SafeERC20.safeTransfer(IERC20(address(real)), mainDepositWallet, amount);
-            withdrawalQueue[proposalId].executed = true;
             emit REALWithdrawn(amount);
             emit WithdrawalExecuted(proposalId, address(real), amount);
         }
