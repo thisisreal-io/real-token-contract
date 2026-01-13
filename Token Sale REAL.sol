@@ -186,7 +186,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         uint256 lower = 1e18 - deviation; // Lower bound (e.g., 0.99)
         uint256 upper = 1e18 + deviation; // Upper bound (e.g., 1.01)
         require(price >= lower && price <= upper, "Stablecoin: depegged");
-        require(block.timestamp - _updatedAt < 2 hours, "Stablecoin: price stale");
+        require(block.timestamp - _updatedAt < 25 hours, "Stablecoin: price stale");
         return (price, _updatedAt);
     }
 
