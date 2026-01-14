@@ -28,14 +28,15 @@ contract Real_Estate_Alliance_League is ERC20, ERC20Burnable, Ownable {
         ERC20("Real Estate Alliance League", "REAL")
         Ownable(initialOwner)
     {
-        mint(address1, 14200000 * 10 ** 18);
-        mint(address2, 1000000 * 10 ** 18);
-        mint(address3, 1000000 * 10 ** 18);
-	    mint(address4, 2000000 * 10 ** 18);
-        mint(address5, 900000 * 10 ** 18);
-        mint(address6, 900000 * 10 ** 18);
-        mint(address7, 500000 * 10 ** 18);
-        mint(address8, 500000 * 10 ** 18);
+        _mint(address1, 14200000 * 10 ** 18);
+        _mint(address2, 1000000 * 10 ** 18);
+        _mint(address3, 1000000 * 10 ** 18);
+        _mint(address4, 2000000 * 10 ** 18);
+        _mint(address5, 900000 * 10 ** 18);
+        _mint(address6, 900000 * 10 ** 18);
+        _mint(address7, 500000 * 10 ** 18);
+        _mint(address8, 500000 * 10 ** 18);
+        mintedSupply = PRE_MINTED_SUPPLY;
     }
 
     function mint(address to, uint256 amount) public onlyOwner {
