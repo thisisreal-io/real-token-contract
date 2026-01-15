@@ -17,16 +17,16 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract TokenSaleREAL is ReentrancyGuard, Pausable {
-    uint256 public hardcap;
+    uint256 public immutable hardcap;
     uint256 public totalBought;
     uint64 public icoDuration;
     uint64 public icoStartTime;
 
     // Added separate Chainlink price feeds for each stablecoin (USDT, USDC, DAI)
-    AggregatorV3Interface internal priceFeed;
-    AggregatorV3Interface internal daiUsdPriceFeed;
-    AggregatorV3Interface internal usdtUsdPriceFeed;
-    AggregatorV3Interface internal usdcUsdPriceFeed;
+    AggregatorV3Interface internal immutable priceFeed;
+    AggregatorV3Interface internal immutable daiUsdPriceFeed;
+    AggregatorV3Interface internal immutable usdtUsdPriceFeed;
+    AggregatorV3Interface internal immutable usdcUsdPriceFeed;
 
     // Added stablecoin slippage tolerance (1% default)
     uint256 public stableSlippageBps = 100; // 1% slippage allowed
@@ -36,7 +36,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     uint256 public constant REQUIRED_SIGNATURES = 3; // 3 out of 5 signers must approve
     uint256 public constant PROPOSAL_EXPIRY = 14 days; // Proposals expire after 14 days
     uint256 public constant WITHDRAWAL_TIMELOCK = 7 days; // 7-day delay after 3 signatures before execution
-    address public mainDepositWallet; // Fixed deposit wallet (cannot be changed by owner)
+    address public immutable mainDepositWallet; // Fixed deposit wallet (cannot be changed by owner)
 
     // Multisig proposal tracking
     mapping(bytes32 => mapping(address => bool)) public proposalSignatures; // Tracks which signers have signed each proposal

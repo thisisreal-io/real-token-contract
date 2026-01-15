@@ -21,15 +21,15 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
-    uint256 public hardcap;
+    uint256 public immutable hardcap;
     uint256 public totalClaimed;
-    uint256 public claimableAmt;
-    IERC20 public real;
+    uint256 public immutable claimableAmt;
+    IERC20 public immutable real;
 
     mapping(address => bool) public userClaimed;
 
     // Signature verification for claims
-    address public signerAddress;
+    address public immutable signerAddress;
     mapping(address => uint256) public nonces;
 
     // Multisig infrastructure
@@ -37,7 +37,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant PROPOSAL_EXPIRY = 14 days;
     uint256 public constant WITHDRAWAL_TIMELOCK = 7 days;
-    address public mainDepositWallet;
+    address public immutable mainDepositWallet;
 
     mapping(bytes32 => mapping(address => bool)) public proposalSignatures;
     mapping(bytes32 => uint256) public proposalSignatureCount;
