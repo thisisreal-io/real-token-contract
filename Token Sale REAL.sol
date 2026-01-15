@@ -92,6 +92,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
     event WithdrawalQueued(bytes32 indexed proposalId, address indexed token, uint256 amount);
     event WithdrawalExecuted(bytes32 indexed proposalId, address indexed token, uint256 amount);
     event ProposalSigned(bytes32 indexed proposalId, address indexed signer);
+    event TimelockStarted(bytes32 indexed proposalId, uint256 timelockStart);
     event StableSlippageBpsSet(uint256 newBps, address indexed setter);
 
     receive() external payable {}
@@ -368,6 +369,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             // Set timelock start when required signatures (3) are reached
             if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
                 proposalTimelockStart[proposalId] = block.timestamp;
+                emit TimelockStarted(proposalId, block.timestamp);
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
@@ -412,6 +414,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
                 proposalTimelockStart[proposalId] = block.timestamp;
+                emit TimelockStarted(proposalId, block.timestamp);
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
@@ -454,6 +457,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
                 proposalTimelockStart[proposalId] = block.timestamp;
+                emit TimelockStarted(proposalId, block.timestamp);
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
@@ -496,6 +500,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
                 proposalTimelockStart[proposalId] = block.timestamp;
+                emit TimelockStarted(proposalId, block.timestamp);
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
@@ -538,6 +543,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
             }
             if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
                 proposalTimelockStart[proposalId] = block.timestamp;
+                emit TimelockStarted(proposalId, block.timestamp);
             }
             emit ProposalSigned(proposalId, msg.sender);
         }
