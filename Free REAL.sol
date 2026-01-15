@@ -36,11 +36,13 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     address[5] public signers;
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant PROPOSAL_EXPIRY = 14 days;
+    uint256 public constant WITHDRAWAL_TIMELOCK = 7 days;
     address public mainDepositWallet;
 
     mapping(bytes32 => mapping(address => bool)) public proposalSignatures;
     mapping(bytes32 => uint256) public proposalSignatureCount;
     mapping(bytes32 => uint256) public proposalCreatedAt;
+    mapping(bytes32 => uint256) public proposalTimelockStart;
 
     struct WithdrawalQueue {
         uint256 amount;
@@ -58,6 +60,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
     event WithdrawalQueued(bytes32 indexed proposalId, uint256 amount);
     event WithdrawalExecuted(bytes32 indexed proposalId, uint256 amount);
     event ProposalSigned(bytes32 indexed proposalId, address indexed signer);
+    event TimelockStarted(bytes32 indexed proposalId, uint256 timelockStart);
 
     modifier onlySigner() {
         require(isSigner(msg.sender), "FreeREAL: Not a signer");
@@ -110,6 +113,14 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
             return false;
         }
         return block.timestamp > proposalCreatedAt[_proposalId] + PROPOSAL_EXPIRY;
+    }
+
+    // Check if 7-day timelock has passed since 3rd signature
+    function isTimelockPassed(bytes32 _proposalId) public view returns (bool) {
+        if (proposalTimelockStart[_proposalId] == 0) {
+            return false;
+        }
+        return block.timestamp >= proposalTimelockStart[_proposalId] + WITHDRAWAL_TIMELOCK;
     }
 
     /**
@@ -184,7 +195,7 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
         _unpause();
     }
 
-    function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner {
+    function withdrawREAL(uint256 amount, bytes32 nonce) external onlySigner nonReentrant {
         require(amount > 0, "FreeREAL: Withdraw amount must be greater than zero");
         require(
             real.balanceOf(address(this)) >= amount,
@@ -203,20 +214,29 @@ contract FreeREAL is Ownable, ReentrancyGuard, Pausable {
                 proposalCreatedAt[proposalId] = block.timestamp;
             }
             emit ProposalSigned(proposalId, msg.sender);
+            
+            // Start timelock when required signatures (3) are reached
+            if (hasRequiredSignatures(proposalId) && proposalTimelockStart[proposalId] == 0) {
+                proposalTimelockStart[proposalId] = block.timestamp;
+                emit TimelockStarted(proposalId, block.timestamp);
+            }
         }
         if (!hasRequiredSignatures(proposalId)) {
             return;
         }
+        if (!isTimelockPassed(proposalId)) {
+            return;
+        }
         if (!withdrawalQueue[proposalId].executed) {
+            // CEI Pattern: EFFECTS - Update state BEFORE external call
             withdrawalQueue[proposalId] = WithdrawalQueue({
                 amount: amount,
-                executed: false
+                executed: true  // Mark as executed BEFORE transfer
             });
             emit WithdrawalQueued(proposalId, amount);
             
-            // Automatically transfer to main deposit wallet when queued
+            // CEI Pattern: INTERACTIONS - External call happens LAST
             SafeERC20.safeTransfer(IERC20(address(real)), mainDepositWallet, amount);
-            withdrawalQueue[proposalId].executed = true;
             emit REALWithdrawn(amount);
             emit WithdrawalExecuted(proposalId, amount);
         }
