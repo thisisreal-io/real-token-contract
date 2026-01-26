@@ -13,15 +13,15 @@ contract Vesting is Ownable, ReentrancyGuard {
 
     struct EventDetail {
         uint8 eventNumber;
-        uint32 eventMaturityTime;
+        uint256 eventMaturityTime;
         bool unlockStatus;
     }
 
     uint8 public totalEvents; // @dev unlock event range 1-10
     uint8 public maturedEvents;
-    uint32 public vestingDuration; // @dev unlock duration range 1-120 months
-    uint32 public startTime;
-    uint32 public eventSpan;
+    uint256 public vestingDuration; // @dev unlock duration range 1-120 months
+    uint256 public startTime;
+    uint256 public eventSpan;
     uint256 public lockedFund;
     uint256 public unlockedFund;
     uint256 public amountPerEvent;
@@ -35,7 +35,7 @@ contract Vesting is Ownable, ReentrancyGuard {
     event VestingStarted(
         uint256 amount,
         uint8 totalEvents,
-        uint32 vestingDuration,
+        uint256 vestingDuration,
         uint256 startTime
     );
     event UnlockedEvent(uint256 amount, uint8 eventCount, uint256 unlockedTime);
@@ -65,9 +65,9 @@ contract Vesting is Ownable, ReentrancyGuard {
 
         lockedFund = _vestingAmount;
         totalEvents = _totalEvents;
-        vestingDuration = _vestingDuration * uint32(30 days);
+        vestingDuration = _vestingDuration * uint256(30 days);
         eventSpan = vestingDuration / totalEvents;
-        startTime = uint32(block.timestamp);
+        startTime = block.timestamp;
         // Calculate amount per event, remainder will be added to last event
         amountPerEvent = lockedFund / totalEvents;
 
@@ -75,8 +75,8 @@ contract Vesting is Ownable, ReentrancyGuard {
             eventDetails.push(
                 EventDetail({
                     eventNumber: (i),
-                    eventMaturityTime: (eventSpan * uint32(i)) +
-                        uint32(block.timestamp),
+                    eventMaturityTime: (eventSpan * uint256(i)) +
+                        block.timestamp,
                     unlockStatus: false
                 })
             );
