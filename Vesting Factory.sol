@@ -17,6 +17,9 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
 
     mapping(address => address[]) public contractsOwners;
 
+    // Maximum memo length in bytes (256 bytes = ~256 ASCII characters)
+    uint256 public constant MAX_MEMO_BYTES = 256;
+
     event DeployedContracts(
         address indexed _tokenAddress,
         address indexed _contractAddress,
@@ -43,6 +46,10 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         string memory _vestingMemo
     ) public nonReentrant whenNotPaused {
         require(_vestingAmount > 0, "Vesting amount must be greater than zero");
+        require(
+            bytes(_vestingMemo).length <= MAX_MEMO_BYTES,
+            "Vesting memo exceeds maximum length"
+        );
         require(
             realToken.balanceOf(msg.sender) >= _vestingAmount,
             "Insufficient REAL token balance"

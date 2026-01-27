@@ -32,6 +32,9 @@ contract Vesting is Ownable, ReentrancyGuard {
     address public factory;
     uint256 public nftTokenId;
 
+    // Maximum memo length in bytes (256 bytes = ~256 ASCII characters)
+    uint256 public constant MAX_MEMO_BYTES = 256;
+
     event VestingStarted(
         uint256 amount,
         uint8 totalEvents,
@@ -134,6 +137,10 @@ contract Vesting is Ownable, ReentrancyGuard {
     {
         require(totalEvents > maturedEvents, "Vesting completed");
         require(lockedFund > unlockedFund, "unable to lock");
+        require(
+            bytes(_unlockingMemo).length <= MAX_MEMO_BYTES,
+            "Unlocking memo exceeds maximum length"
+        );
 
         uint8 _maturedEvents;
         uint arrayLen = eventDetails.length;
