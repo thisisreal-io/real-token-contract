@@ -214,24 +214,39 @@ contract Vesting is Ownable, ReentrancyGuard {
 
     /**
      * @dev Get claimable amount (matured events that haven't been unlocked yet)
+     * Accounts for remainder tokens that are added to the final vesting event
      */
     function getClaimableAmount() public view returns (uint256) {
         uint8 _maturedEvents = 0;
+        bool includesFinalEvent = false;
         uint arrayLen = eventDetails.length;
 
         for (uint i; i < arrayLen; i++) {
             if (eventDetails[i].eventMaturityTime <= block.timestamp) {
                 if (!eventDetails[i].unlockStatus) {
                     _maturedEvents++;
+                    // Check if this is the final event (eventNumber == totalEvents)
+                    if (eventDetails[i].eventNumber == totalEvents) {
+                        includesFinalEvent = true;
+                    }
                 }
             }
         }
 
-        return amountPerEvent * uint256(_maturedEvents);
+        uint256 baseAmount = amountPerEvent * uint256(_maturedEvents);
+        
+        // If final event is included, add remainder tokens
+        if (includesFinalEvent) {
+            uint256 remainder = lockedFund - (amountPerEvent * uint256(totalEvents));
+            return baseAmount + remainder;
+        }
+        
+        return baseAmount;
     }
 
     /**
      * @dev Get next release date and amount
+     * Accounts for remainder tokens that are added to the final vesting event
      */
     function getNextReleaseInfo() public view returns (uint256 nextReleaseDate, uint256 nextReleaseAmount) {
         uint arrayLen = eventDetails.length;
@@ -240,6 +255,13 @@ contract Vesting is Ownable, ReentrancyGuard {
             if (eventDetails[i].eventMaturityTime > block.timestamp && !eventDetails[i].unlockStatus) {
                 nextReleaseDate = eventDetails[i].eventMaturityTime;
                 nextReleaseAmount = amountPerEvent;
+                
+                // If this is the final event, add remainder tokens
+                if (eventDetails[i].eventNumber == totalEvents) {
+                    uint256 remainder = lockedFund - (amountPerEvent * uint256(totalEvents));
+                    nextReleaseAmount = amountPerEvent + remainder;
+                }
+                
                 break;
             }
         }
