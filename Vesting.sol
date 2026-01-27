@@ -155,14 +155,14 @@ contract Vesting is Ownable, ReentrancyGuard {
                     bytes memory __eventsBytes = bytes(
                         uint(eventDetails[i].eventNumber).toString()
                     );
-                    bytes memory eventsBytesEn;
-                    if (i < arrayLen - 1) {
-                        eventsBytesEn = abi.encodePacked(__eventsBytes, ", ");
+                    
+                    // Add comma only if we've already added at least one event
+                    // This ensures no trailing comma regardless of array position
+                    if (evBytes.length > 0) {
+                        evBytes = bytes.concat(evBytes, ", ", __eventsBytes);
                     } else {
-                        eventsBytesEn = abi.encodePacked(__eventsBytes);
+                        evBytes = bytes.concat(evBytes, __eventsBytes);
                     }
-
-                    evBytes = bytes.concat(evBytes, eventsBytesEn);
                 }
             }
         }
