@@ -32,6 +32,9 @@ contract Vesting is Ownable, ReentrancyGuard {
     address public factory;
     uint256 public nftTokenId;
 
+    // Maximum memo length in bytes (256 bytes = ~256 ASCII characters)
+    uint256 public constant MAX_MEMO_BYTES = 256;
+
     event VestingStarted(
         uint256 amount,
         uint8 totalEvents,
@@ -39,6 +42,7 @@ contract Vesting is Ownable, ReentrancyGuard {
         uint256 startTime
     );
     event UnlockedEvent(uint256 amount, uint8 eventCount, uint256 unlockedTime);
+    event LockedFundAdjusted(uint256 previousLockedFund, uint256 newLockedFund);
 
     constructor(
         address _initialOwner,
@@ -105,6 +109,24 @@ contract Vesting is Ownable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @dev Adjust locked fund to match the actual amount received (fee-on-transfer / deflationary tokens).
+     * Callable only by the factory, intended to be called immediately after token transfer in the same tx.
+     *
+     * This updates `lockedFund` and recalculates `amountPerEvent` so future unlocks match real balance.
+     */
+    function adjustLockedFund(uint256 _actualLockedFund) external {
+        require(msg.sender == factory, "Only factory can adjust locked fund");
+        require(unlockedFund == 0 && maturedEvents == 0, "Vesting already started");
+        require(_actualLockedFund > 0, "Actual locked fund must be > 0");
+
+        uint256 previous = lockedFund;
+        lockedFund = _actualLockedFund;
+        amountPerEvent = lockedFund / totalEvents;
+
+        emit LockedFundAdjusted(previous, _actualLockedFund);
+    }
+
     function unlockFund(
         string memory _unlockingMemo
     )
@@ -115,6 +137,10 @@ contract Vesting is Ownable, ReentrancyGuard {
     {
         require(totalEvents > maturedEvents, "Vesting completed");
         require(lockedFund > unlockedFund, "unable to lock");
+        require(
+            bytes(_unlockingMemo).length <= MAX_MEMO_BYTES,
+            "Unlocking memo exceeds maximum length"
+        );
 
         uint8 _maturedEvents;
         uint arrayLen = eventDetails.length;
@@ -129,14 +155,14 @@ contract Vesting is Ownable, ReentrancyGuard {
                     bytes memory __eventsBytes = bytes(
                         uint(eventDetails[i].eventNumber).toString()
                     );
-                    bytes memory eventsBytesEn;
-                    if (i < arrayLen - 1) {
-                        eventsBytesEn = abi.encodePacked(__eventsBytes, ", ");
+                    
+                    // Add comma only if we've already added at least one event
+                    // This ensures no trailing comma regardless of array position
+                    if (evBytes.length > 0) {
+                        evBytes = bytes.concat(evBytes, ", ", __eventsBytes);
                     } else {
-                        eventsBytesEn = abi.encodePacked(__eventsBytes);
+                        evBytes = bytes.concat(evBytes, __eventsBytes);
                     }
-
-                    evBytes = bytes.concat(evBytes, eventsBytesEn);
                 }
             }
         }
@@ -195,24 +221,39 @@ contract Vesting is Ownable, ReentrancyGuard {
 
     /**
      * @dev Get claimable amount (matured events that haven't been unlocked yet)
+     * Accounts for remainder tokens that are added to the final vesting event
      */
     function getClaimableAmount() public view returns (uint256) {
         uint8 _maturedEvents = 0;
+        bool includesFinalEvent = false;
         uint arrayLen = eventDetails.length;
 
         for (uint i; i < arrayLen; i++) {
             if (eventDetails[i].eventMaturityTime <= block.timestamp) {
                 if (!eventDetails[i].unlockStatus) {
                     _maturedEvents++;
+                    // Check if this is the final event (eventNumber == totalEvents)
+                    if (eventDetails[i].eventNumber == totalEvents) {
+                        includesFinalEvent = true;
+                    }
                 }
             }
         }
 
-        return amountPerEvent * uint256(_maturedEvents);
+        uint256 baseAmount = amountPerEvent * uint256(_maturedEvents);
+        
+        // If final event is included, add remainder tokens
+        if (includesFinalEvent) {
+            uint256 remainder = lockedFund - (amountPerEvent * uint256(totalEvents));
+            return baseAmount + remainder;
+        }
+        
+        return baseAmount;
     }
 
     /**
      * @dev Get next release date and amount
+     * Accounts for remainder tokens that are added to the final vesting event
      */
     function getNextReleaseInfo() public view returns (uint256 nextReleaseDate, uint256 nextReleaseAmount) {
         uint arrayLen = eventDetails.length;
@@ -221,6 +262,13 @@ contract Vesting is Ownable, ReentrancyGuard {
             if (eventDetails[i].eventMaturityTime > block.timestamp && !eventDetails[i].unlockStatus) {
                 nextReleaseDate = eventDetails[i].eventMaturityTime;
                 nextReleaseAmount = amountPerEvent;
+                
+                // If this is the final event, add remainder tokens
+                if (eventDetails[i].eventNumber == totalEvents) {
+                    uint256 remainder = lockedFund - (amountPerEvent * uint256(totalEvents));
+                    nextReleaseAmount = amountPerEvent + remainder;
+                }
+                
                 break;
             }
         }

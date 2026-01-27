@@ -17,6 +17,9 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
 
     mapping(address => address[]) public contractsOwners;
 
+    // Maximum memo length in bytes (256 bytes = ~256 ASCII characters)
+    uint256 public constant MAX_MEMO_BYTES = 256;
+
     event DeployedContracts(
         address indexed _tokenAddress,
         address indexed _contractAddress,
@@ -44,6 +47,10 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
     ) public nonReentrant whenNotPaused {
         require(_vestingAmount > 0, "Vesting amount must be greater than zero");
         require(
+            bytes(_vestingMemo).length <= MAX_MEMO_BYTES,
+            "Vesting memo exceeds maximum length"
+        );
+        require(
             realToken.balanceOf(msg.sender) >= _vestingAmount,
             "Insufficient REAL token balance"
         );
@@ -64,7 +71,6 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         address _vestingAddress = address(deployedVesting);
         deployedContracts.push(_vestingAddress);
         contractsOwners[msg.sender].push(_vestingAddress);
-        totalLocked += _vestingAmount;
 
         SafeERC20.safeTransferFrom(
             realToken,
@@ -72,6 +78,14 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
             _vestingAddress,
             _vestingAmount
         );
+
+        // Handle fee-on-transfer / deflationary tokens: measure actual received amount
+        uint256 actualLocked = realToken.balanceOf(_vestingAddress);
+        require(actualLocked > 0, "No tokens received by vesting");
+
+        // Adjust vesting accounting to match actual received amount
+        deployedVesting.adjustLockedFund(actualLocked);
+        totalLocked += actualLocked;
 
         // Mint NFT receipt for the vesting contract
         uint256 nftTokenId = vestingReceiptNFT.mint(msg.sender, _vestingAddress);
@@ -83,7 +97,7 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
             address(realToken),
             _vestingAddress,
             msg.sender,
-            _vestingAmount,
+            actualLocked,
             nftTokenId
         );
     }
