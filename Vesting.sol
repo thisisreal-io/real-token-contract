@@ -39,6 +39,7 @@ contract Vesting is Ownable, ReentrancyGuard {
         uint256 startTime
     );
     event UnlockedEvent(uint256 amount, uint8 eventCount, uint256 unlockedTime);
+    event LockedFundAdjusted(uint256 previousLockedFund, uint256 newLockedFund);
 
     constructor(
         address _initialOwner,
@@ -103,6 +104,24 @@ contract Vesting is Ownable, ReentrancyGuard {
             vestingDuration,
             block.timestamp
         );
+    }
+
+    /**
+     * @dev Adjust locked fund to match the actual amount received (fee-on-transfer / deflationary tokens).
+     * Callable only by the factory, intended to be called immediately after token transfer in the same tx.
+     *
+     * This updates `lockedFund` and recalculates `amountPerEvent` so future unlocks match real balance.
+     */
+    function adjustLockedFund(uint256 _actualLockedFund) external {
+        require(msg.sender == factory, "Only factory can adjust locked fund");
+        require(unlockedFund == 0 && maturedEvents == 0, "Vesting already started");
+        require(_actualLockedFund > 0, "Actual locked fund must be > 0");
+
+        uint256 previous = lockedFund;
+        lockedFund = _actualLockedFund;
+        amountPerEvent = lockedFund / totalEvents;
+
+        emit LockedFundAdjusted(previous, _actualLockedFund);
     }
 
     function unlockFund(

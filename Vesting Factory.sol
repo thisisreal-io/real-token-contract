@@ -64,7 +64,6 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         address _vestingAddress = address(deployedVesting);
         deployedContracts.push(_vestingAddress);
         contractsOwners[msg.sender].push(_vestingAddress);
-        totalLocked += _vestingAmount;
 
         SafeERC20.safeTransferFrom(
             realToken,
@@ -72,6 +71,14 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
             _vestingAddress,
             _vestingAmount
         );
+
+        // Handle fee-on-transfer / deflationary tokens: measure actual received amount
+        uint256 actualLocked = realToken.balanceOf(_vestingAddress);
+        require(actualLocked > 0, "No tokens received by vesting");
+
+        // Adjust vesting accounting to match actual received amount
+        deployedVesting.adjustLockedFund(actualLocked);
+        totalLocked += actualLocked;
 
         // Mint NFT receipt for the vesting contract
         uint256 nftTokenId = vestingReceiptNFT.mint(msg.sender, _vestingAddress);
@@ -83,7 +90,7 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
             address(realToken),
             _vestingAddress,
             msg.sender,
-            _vestingAmount,
+            actualLocked,
             nftTokenId
         );
     }
