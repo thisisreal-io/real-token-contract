@@ -29,6 +29,7 @@ contract Vesting is ReentrancyGuard {
     EventDetail[] public eventDetails;
 
     IERC20 public token;
+    IERC721 public vestingReceiptNFT;
     address public factory;
     uint256 public nftTokenId;
 
