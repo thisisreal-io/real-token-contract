@@ -2,12 +2,12 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-contract Vesting is Ownable, ReentrancyGuard {
+contract Vesting is ReentrancyGuard {
     using Strings for address;
     using Strings for uint;
 
@@ -45,19 +45,24 @@ contract Vesting is Ownable, ReentrancyGuard {
     event LockedFundAdjusted(uint256 previousLockedFund, uint256 newLockedFund);
 
     constructor(
-        address _initialOwner,
         address _token,
         uint256 _vestingAmount,
         uint8 _totalEvents,
         uint8 _vestingDuration,
-        string memory _vestingMemo
-    ) Ownable(_initialOwner) {
+        string memory _vestingMemo,
+        address _vestingReceiptNFT
+    ) {
         factory = msg.sender;
         require(
             _token != address(0),
             "Token address cannot be zero address"
         );
+        require(
+            _vestingReceiptNFT != address(0),
+            "VestingReceiptNFT address cannot be zero"
+        );
         token = IERC20(_token);
+        vestingReceiptNFT = IERC721(_vestingReceiptNFT);
         require(_totalEvents <= 10 && _totalEvents > 0, "Invalid total events");
 
         // @dev - {_vestingDuration} must be in number of months. e.g. 1 ~ 1 month , 120 ~ 120 months
@@ -131,10 +136,14 @@ contract Vesting is Ownable, ReentrancyGuard {
         string memory _unlockingMemo
     )
         external
-        onlyOwner
         nonReentrant
         returns (uint256 amountToSent, string memory evString)
     {
+        require(nftTokenId != 0, "NFT token ID not set");
+        require(
+            vestingReceiptNFT.ownerOf(nftTokenId) == msg.sender,
+            "Not NFT holder"
+        );
         require(totalEvents > maturedEvents, "Vesting completed");
         require(lockedFund > unlockedFund, "unable to lock");
         require(

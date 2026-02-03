@@ -60,12 +60,12 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         );
 
         Vesting deployedVesting = new Vesting(
-            msg.sender,
             address(realToken),
             _vestingAmount,
             _totalEvents,
             _vestingDuration,
-            _vestingMemo
+            _vestingMemo,
+            address(vestingReceiptNFT)
         );
 
         address _vestingAddress = address(deployedVesting);
