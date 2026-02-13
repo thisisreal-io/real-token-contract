@@ -13,12 +13,15 @@ contract VestingReceiptNFT is ERC721, Ownable {
     uint256 private _tokenIdCounter = 1; // Start from 1 to avoid tokenId 0 ambiguity
     mapping(uint256 => address) public vestingContract; // NFT tokenId => Vesting contract address
     mapping(address => uint256) public vestingToTokenId; // Vesting contract => NFT tokenId
+    /// @dev Per-token metadata URI (e.g. ipfs://CID). One-time set via setTokenURI. REA-03.
+    mapping(uint256 => string) private _tokenURIs;
 
     event VestingReceiptMinted(
         uint256 indexed tokenId,
         address indexed vestingContract,
         address indexed owner
     );
+    event TokenURISet(uint256 indexed tokenId, string uri);
 
     constructor(address _initialOwner) ERC721("REAL Vesting Receipt", "REALVR") Ownable(_initialOwner) {}
 
@@ -42,6 +45,19 @@ contract VestingReceiptNFT is ERC721, Ownable {
         emit VestingReceiptMinted(tokenId, _vestingContract, _to);
 
         return tokenId;
+    }
+
+    /**
+     * @dev Set metadata URI for a token (e.g. ipfs://CID). One-time only; immutable after set. Option B / REA-03.
+     * @param _tokenId NFT token ID
+     * @param _uri Content-addressed URI (e.g. ipfs://... or ar://...)
+     */
+    function setTokenURI(uint256 _tokenId, string calldata _uri) external onlyOwner {
+        require(_exists(_tokenId), "Token does not exist");
+        require(bytes(_tokenURIs[_tokenId]).length == 0, "Token URI already set");
+        require(bytes(_uri).length > 0, "URI cannot be empty");
+        _tokenURIs[_tokenId] = _uri;
+        emit TokenURISet(_tokenId, _uri);
     }
 
     function getVestingInfo(uint256 _tokenId) external view returns (
@@ -84,17 +100,12 @@ contract VestingReceiptNFT is ERC721, Ownable {
     }
 
     /**
-     * @dev Generate token URI for NFT metadata
-     * Note: For full metadata, backend should query getVestingInfo() and generate JSON
+     * @dev Token URI for NFT metadata. Option B: per-token content-addressed URI (e.g. ipfs://). REA-03.
+     * Returns empty until setTokenURI is called for this token.
      */
     function tokenURI(uint256 _tokenId) public view override returns (string memory) {
         require(_exists(_tokenId), "Token does not exist");
-        
-        // Return a basic URI - frontend/backend should query getVestingInfo() for full details
-        return string(abi.encodePacked(
-            "https://dev.thisisreal.io/api/vesting-receipt/",
-            _tokenId.toString()
-        ));
+        return _tokenURIs[_tokenId];
     }
 
     /**
