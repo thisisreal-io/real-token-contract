@@ -102,6 +102,15 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         );
     }
 
+    /**
+     * @dev Set metadata URI for a vesting receipt NFT (REA-03). Callable only by the Factory's
+     * initial owner (the address set as _initialOwner in the constructor). The owner signs
+     * transactions off-chain with their wallet; use that wallet's private key in backend/test.
+     */
+    function setVestingReceiptTokenURI(uint256 _tokenId, string calldata _uri) external onlyOwner {
+        vestingReceiptNFT.setTokenURI(_tokenId, _uri);
+    }
+
     function pause() public whenNotPaused onlyOwner {
         _pause();
     }
