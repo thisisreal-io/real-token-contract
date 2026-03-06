@@ -69,7 +69,8 @@ contract VestingReceiptNFT is ERC721, Ownable {
         uint256 nextReleaseDate,
         uint256 nextReleaseAmount,
         uint256 vestingEndDate,
-        string memory releaseRatio
+        string memory releaseRatio,
+        uint8 firstUnlockMonthValue
     ) {
         require(_exists(_tokenId), "Token does not exist");
         address vestingAddr = vestingContract[_tokenId];
@@ -85,6 +86,7 @@ contract VestingReceiptNFT is ERC721, Ownable {
         (nextReleaseDate, nextReleaseAmount) = vesting.getNextReleaseInfo();
         vestingEndDate = vesting.getVestingEndDate();
         releaseRatio = vesting.getReleaseRatio();
+        firstUnlockMonthValue = vesting.firstUnlockMonth();
 
         return (
             vestingAddr,
@@ -95,7 +97,8 @@ contract VestingReceiptNFT is ERC721, Ownable {
             nextReleaseDate,
             nextReleaseAmount,
             vestingEndDate,
-            releaseRatio
+            releaseRatio,
+            firstUnlockMonthValue
         );
     }
 
