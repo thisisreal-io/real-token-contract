@@ -66,7 +66,7 @@ contract Vesting is ReentrancyGuard {
         );
         token = IERC20(_token);
         vestingReceiptNFT = IERC721(_vestingReceiptNFT);
-        require(_totalEvents <= 10 && _totalEvents > 0, "Invalid total events");
+        require(_totalEvents <= 120 && _totalEvents > 0, "Invalid total events");
 
         // @dev - {_vestingDuration} must be in number of months. e.g. 1 ~ 1 month , 120 ~ 120 months
 
