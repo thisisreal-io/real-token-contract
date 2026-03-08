@@ -17,7 +17,7 @@ contract Vesting is ReentrancyGuard {
         bool unlockStatus;
     }
 
-    uint8 public totalEvents; // @dev unlock event range 1-10
+    uint8 public totalEvents; // @dev unlock event range 1-120
     uint8 public maturedEvents;
     uint256 public vestingDuration; // @dev unlock duration range 1-120 months
     uint256 public startTime;
@@ -66,7 +66,7 @@ contract Vesting is ReentrancyGuard {
         );
         token = IERC20(_token);
         vestingReceiptNFT = IERC721(_vestingReceiptNFT);
-        require(_totalEvents <= 120 && _totalEvents > 0, "Invalid total events");
+        require(_totalEvents > 0, "Invalid total events");
 
         // @dev - {_vestingDuration} must be in number of months. e.g. 1 ~ 1 month , 120 ~ 120 months
 
@@ -75,18 +75,21 @@ contract Vesting is ReentrancyGuard {
             "Invalid vesting duration"
         );
 
-        if (_firstUnlockMonth > 0) {
-            if (_totalEvents > 1) {
-                require(
-                    _firstUnlockMonth < _vestingDuration,
-                    "First unlock month must be less than vesting duration"
-                );
-            } else {
-                require(
-                    _firstUnlockMonth <= _vestingDuration,
-                    "First unlock month must not exceed vesting duration"
-                );
-            }
+        if (_firstUnlockMonth == 0) {
+            require(
+                _totalEvents <= _vestingDuration,
+                "Total events exceeds vesting duration"
+            );
+        } else if (_totalEvents == 1) {
+            require(
+                _firstUnlockMonth <= _vestingDuration,
+                "First unlock month must not exceed vesting duration"
+            );
+        } else {
+            require(
+                _totalEvents <= (_vestingDuration - _firstUnlockMonth),
+                "Total events exceeds disbursement window"
+            );
         }
 
         lockedFund = _vestingAmount;
