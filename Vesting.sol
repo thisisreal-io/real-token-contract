@@ -17,11 +17,12 @@ contract Vesting is ReentrancyGuard {
         bool unlockStatus;
     }
 
-    uint8 public totalEvents; // @dev unlock event range 1-10
+    uint8 public totalEvents; // @dev unlock event range 1-120
     uint8 public maturedEvents;
     uint256 public vestingDuration; // @dev unlock duration range 1-120 months
     uint256 public startTime;
     uint256 public eventSpan;
+    uint8 public firstUnlockMonth; // @dev months before first unlock (0 = current behavior)
     uint256 public lockedFund;
     uint256 public unlockedFund;
     uint256 public amountPerEvent;
@@ -50,6 +51,7 @@ contract Vesting is ReentrancyGuard {
         uint256 _vestingAmount,
         uint8 _totalEvents,
         uint8 _vestingDuration,
+        uint8 _firstUnlockMonth,
         string memory _vestingMemo,
         address _vestingReceiptNFT
     ) {
@@ -64,7 +66,7 @@ contract Vesting is ReentrancyGuard {
         );
         token = IERC20(_token);
         vestingReceiptNFT = IERC721(_vestingReceiptNFT);
-        require(_totalEvents <= 10 && _totalEvents > 0, "Invalid total events");
+        require(_totalEvents > 0, "Invalid total events");
 
         // @dev - {_vestingDuration} must be in number of months. e.g. 1 ~ 1 month , 120 ~ 120 months
 
@@ -73,26 +75,83 @@ contract Vesting is ReentrancyGuard {
             "Invalid vesting duration"
         );
 
+        if (_firstUnlockMonth == 0) {
+            require(
+                _totalEvents <= _vestingDuration,
+                "Total events exceeds vesting duration"
+            );
+        } else if (_totalEvents == 1) {
+            require(
+                _firstUnlockMonth <= _vestingDuration,
+                "First unlock month must not exceed vesting duration"
+            );
+        } else {
+            require(
+                _totalEvents <= (_vestingDuration - _firstUnlockMonth),
+                "Total events exceeds disbursement window"
+            );
+        }
+
         lockedFund = _vestingAmount;
         totalEvents = _totalEvents;
+        firstUnlockMonth = _firstUnlockMonth;
         vestingDuration = _vestingDuration * uint256(30 days);
-        eventSpan = vestingDuration / totalEvents;
         startTime = block.timestamp;
-        // Calculate amount per event, remainder will be added to last event
         amountPerEvent = lockedFund / totalEvents;
 
-        for (uint8 i = 1; i <= totalEvents; ) {
-            eventDetails.push(
-                EventDetail({
-                    eventNumber: (i),
-                    eventMaturityTime: (eventSpan * uint256(i)) +
-                        block.timestamp,
-                    unlockStatus: false
-                })
-            );
+        if (_firstUnlockMonth == 0) {
+            eventSpan = vestingDuration / totalEvents;
 
-            unchecked {
-                i++;
+            for (uint8 i = 1; i <= totalEvents; ) {
+                eventDetails.push(
+                    EventDetail({
+                        eventNumber: (i),
+                        eventMaturityTime: (eventSpan * uint256(i)) +
+                            block.timestamp,
+                        unlockStatus: false
+                    })
+                );
+
+                unchecked {
+                    i++;
+                }
+            }
+        } else {
+            uint256 _firstUnlockTime = block.timestamp + (uint256(_firstUnlockMonth) * 30 days);
+            uint256 vestingEnd = block.timestamp + vestingDuration;
+
+            if (_totalEvents == 1) {
+                eventSpan = 0;
+                eventDetails.push(
+                    EventDetail({
+                        eventNumber: 1,
+                        eventMaturityTime: _firstUnlockTime,
+                        unlockStatus: false
+                    })
+                );
+            } else {
+                eventSpan = (vestingEnd - _firstUnlockTime) / (uint256(_totalEvents) - 1);
+
+                for (uint8 i = 0; i < _totalEvents; ) {
+                    uint256 maturityTime;
+                    if (i == _totalEvents - 1) {
+                        maturityTime = vestingEnd;
+                    } else {
+                        maturityTime = _firstUnlockTime + (eventSpan * uint256(i));
+                    }
+
+                    eventDetails.push(
+                        EventDetail({
+                            eventNumber: i + 1,
+                            eventMaturityTime: maturityTime,
+                            unlockStatus: false
+                        })
+                    );
+
+                    unchecked {
+                        i++;
+                    }
+                }
             }
         }
 

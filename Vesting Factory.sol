@@ -43,6 +43,7 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         uint256 _vestingAmount,
         uint8 _totalEvents,
         uint8 _vestingDuration,
+        uint8 _firstUnlockMonth,
         string memory _vestingMemo
     ) public nonReentrant whenNotPaused {
         require(_vestingAmount > 0, "Vesting amount must be greater than zero");
@@ -64,6 +65,7 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
             _vestingAmount,
             _totalEvents,
             _vestingDuration,
+            _firstUnlockMonth,
             _vestingMemo,
             address(vestingReceiptNFT)
         );
