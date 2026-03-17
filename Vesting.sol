@@ -19,10 +19,10 @@ contract Vesting is ReentrancyGuard {
 
     uint8 public totalEvents; // @dev unlock event range 1-120
     uint8 public maturedEvents;
-    uint256 public vestingDuration; // @dev unlock duration range 1-120 months
+    uint256 public vestingDuration; // @dev unlock duration range 1-1200 months (max 100 years)
     uint256 public startTime;
     uint256 public eventSpan;
-    uint8 public firstUnlockMonth; // @dev months before first unlock (0 = current behavior)
+    uint16 public firstUnlockMonth; // @dev months before first unlock (0 = current behavior)
     uint256 public lockedFund;
     uint256 public unlockedFund;
     uint256 public amountPerEvent;
@@ -50,8 +50,8 @@ contract Vesting is ReentrancyGuard {
         address _token,
         uint256 _vestingAmount,
         uint8 _totalEvents,
-        uint8 _vestingDuration,
-        uint8 _firstUnlockMonth,
+        uint16 _vestingDuration,
+        uint16 _firstUnlockMonth,
         string memory _vestingMemo,
         address _vestingReceiptNFT
     ) {
@@ -71,7 +71,7 @@ contract Vesting is ReentrancyGuard {
         // @dev - {_vestingDuration} must be in number of months. e.g. 1 ~ 1 month , 120 ~ 120 months
 
         require(
-            _vestingDuration <= 120 && _vestingDuration >= 1,
+            _vestingDuration <= 1200 && _vestingDuration >= 1,
             "Invalid vesting duration"
         );
 

@@ -42,8 +42,8 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
     function deployVesting(
         uint256 _vestingAmount,
         uint8 _totalEvents,
-        uint8 _vestingDuration,
-        uint8 _firstUnlockMonth,
+        uint16 _vestingDuration,
+        uint16 _firstUnlockMonth,
         string memory _vestingMemo
     ) public nonReentrant whenNotPaused {
         require(_vestingAmount > 0, "Vesting amount must be greater than zero");
