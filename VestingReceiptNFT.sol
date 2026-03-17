@@ -70,7 +70,7 @@ contract VestingReceiptNFT is ERC721, Ownable {
         uint256 nextReleaseAmount,
         uint256 vestingEndDate,
         string memory releaseRatio,
-        uint8 firstUnlockMonthValue
+        uint16 firstUnlockMonthValue
     ) {
         require(_exists(_tokenId), "Token does not exist");
         address vestingAddr = vestingContract[_tokenId];
