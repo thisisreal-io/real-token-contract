@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+// Testing Vesting Portal V6
+// Developement by BBDC.io / contact@bbdc.io
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -71,7 +73,7 @@ contract Vesting is ReentrancyGuard {
         // @dev - {_vestingDuration} must be in number of months. e.g. 1 ~ 1 month , 120 ~ 120 months
 
         require(
-            _vestingDuration <= 1200 && _vestingDuration >= 1,
+            _vestingDuration <= 100 && _vestingDuration >= 1,
             "Invalid vesting duration"
         );
 
@@ -95,7 +97,7 @@ contract Vesting is ReentrancyGuard {
         lockedFund = _vestingAmount;
         totalEvents = _totalEvents;
         firstUnlockMonth = _firstUnlockMonth;
-        vestingDuration = _vestingDuration * uint256(30 days);
+        vestingDuration = _vestingDuration * uint256(1 hours);
         startTime = block.timestamp;
         amountPerEvent = lockedFund / totalEvents;
 
@@ -117,7 +119,7 @@ contract Vesting is ReentrancyGuard {
                 }
             }
         } else {
-            uint256 _firstUnlockTime = block.timestamp + (uint256(_firstUnlockMonth) * 30 days);
+            uint256 _firstUnlockTime = block.timestamp + (uint256(_firstUnlockMonth) * 1 hours);
             uint256 vestingEnd = block.timestamp + vestingDuration;
 
             if (_totalEvents == 1) {
