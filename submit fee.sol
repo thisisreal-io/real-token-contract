@@ -15,10 +15,14 @@ interface IERC20Burnable {
 }
 
 contract SubmitFee is ReentrancyGuard {
-    IERC20Burnable public constant REAL_TOKEN =
-        IERC20Burnable(0x325Aa344761c19F7ab6dc45A95f01d6907A30DCA);
+    IERC20Burnable public immutable REAL_TOKEN;
 
     uint256 public constant SUBMISSION_FEE = 1 * 10 ** 18; // 1 REAL (18 decimals)
+
+    constructor(address realToken) {
+        require(realToken != address(0), "SubmitFee: Token address cannot be zero");
+        REAL_TOKEN = IERC20Burnable(realToken);
+    }
 
     enum SubmissionType {
         Property,
