@@ -11,7 +11,7 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
@@ -354,8 +354,8 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         require(address(this).balance >= amount, "Presale: Not enough ETH in contract");
         bytes32 proposalId = getProposalId(address(0), amount, nonce);
 
-        // Check if proposal has expired (14 days)
-        if (proposalCreatedAt[proposalId] > 0) {
+        // Check if proposal has expired (14 days) - skip if timelock already started
+        if (proposalCreatedAt[proposalId] > 0 && proposalTimelockStart[proposalId] == 0) {
             require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         }
 
@@ -402,7 +402,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         require(usdt.balanceOf(address(this)) >= amount, "Presale: Not enough USDT in contract");
         bytes32 proposalId = getProposalId(address(usdt), amount, nonce);
         
-        if (proposalCreatedAt[proposalId] > 0) {
+        if (proposalCreatedAt[proposalId] > 0 && proposalTimelockStart[proposalId] == 0) {
             require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         }
 
@@ -445,7 +445,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         require(usdc.balanceOf(address(this)) >= amount, "Presale: Not enough USDC in contract");
         bytes32 proposalId = getProposalId(address(usdc), amount, nonce);
         
-        if (proposalCreatedAt[proposalId] > 0) {
+        if (proposalCreatedAt[proposalId] > 0 && proposalTimelockStart[proposalId] == 0) {
             require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         }
 
@@ -488,7 +488,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         require(dai.balanceOf(address(this)) >= amount, "Presale: Not enough DAI in contract");
         bytes32 proposalId = getProposalId(address(dai), amount, nonce);
         
-        if (proposalCreatedAt[proposalId] > 0) {
+        if (proposalCreatedAt[proposalId] > 0 && proposalTimelockStart[proposalId] == 0) {
             require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         }
 
@@ -531,7 +531,7 @@ contract TokenSaleREAL is ReentrancyGuard, Pausable {
         require(real.balanceOf(address(this)) >= amount, "Presale: Not enough REAL in contract");
         bytes32 proposalId = getProposalId(address(real), amount, nonce);
         
-        if (proposalCreatedAt[proposalId] > 0) {
+        if (proposalCreatedAt[proposalId] > 0 && proposalTimelockStart[proposalId] == 0) {
             require(!isProposalExpired(proposalId), "Presale: Proposal expired");
         }
 
