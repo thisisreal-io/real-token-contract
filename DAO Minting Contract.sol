@@ -63,10 +63,6 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
     // Per-proposal pause
     mapping(uint256 => bool) public proposalPaused;
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Structs & Enums
-    // ─────────────────────────────────────────────────────────────────────
-
     enum ProposalStatus {
         Pending,    // Created but voting not started
         Active,     // Voting in progress
