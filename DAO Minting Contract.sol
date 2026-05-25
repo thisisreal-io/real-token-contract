@@ -31,6 +31,8 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
     uint256 public constant APPROVAL_BPS = 5100; // 51%
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant TOTAL_SIGNERS = 5;
+    uint256 public constant MIN_VOTERS = 10; // Minimum unique voters required (10 for testing, increase to 1000 for production)
+    uint256 public constant MAX_VOTE_POWER_BPS = 500; // 5% max voting power per user (relative to circulating supply in vote units)
 
     // ─────────────────────────────────────────────────────────────────────
     // State Variables
@@ -82,6 +84,7 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
         uint256 votingEnd;
         uint256 yesVotes;
         uint256 noVotes;
+        uint256 voterCount;
         bool executed;
         bool cancelled;
     }
@@ -221,6 +224,7 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
             votingEnd: _votingEnd,
             yesVotes: 0,
             noVotes: 0,
+            voterCount: 0,
             executed: false,
             cancelled: false
         });
@@ -273,15 +277,21 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
             "DAO: invalid merkle proof"
         );
 
+        // Cap voting power at 5% of circulating supply (in vote units)
+        uint256 maxPower = (proposal.circulatingSupplySnapshot * MAX_VOTE_POWER_BPS) /
+            (10000 * TOKENS_PER_VOTE);
+        uint256 effectivePower = _votingPower > maxPower ? maxPower : _votingPower;
+
         hasVoted[_proposalId][msg.sender] = true;
+        proposal.voterCount++;
 
         if (_support) {
-            proposal.yesVotes += _votingPower;
+            proposal.yesVotes += effectivePower;
         } else {
-            proposal.noVotes += _votingPower;
+            proposal.noVotes += effectivePower;
         }
 
-        emit VoteCast(_proposalId, msg.sender, _support, _votingPower);
+        emit VoteCast(_proposalId, msg.sender, _support, effectivePower);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -299,6 +309,9 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
         require(!proposal.cancelled, "DAO: proposal cancelled");
         require(!proposalPaused[_proposalId], "DAO: proposal is paused");
         require(block.timestamp > proposal.votingEnd, "DAO: voting not ended");
+
+        // Verify minimum unique voters participated
+        require(proposal.voterCount >= MIN_VOTERS, "DAO: minimum voter count not met");
 
         // Verify quorum: total votes >= 15% of circulating supply (in vote units)
         uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
@@ -531,6 +544,8 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
         if (block.timestamp <= proposal.votingEnd) return ProposalStatus.Active;
 
         // Voting has ended — check if passed
+        if (proposal.voterCount < MIN_VOTERS) return ProposalStatus.Failed;
+
         uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
         uint256 quorumThreshold = (proposal.circulatingSupplySnapshot * QUORUM_BPS) /
             (10000 * TOKENS_PER_VOTE);
@@ -556,6 +571,7 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
             uint256 votingEnd,
             uint256 yesVotes,
             uint256 noVotes,
+            uint256 voterCount,
             ProposalStatus status
         )
     {
@@ -571,6 +587,7 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
             p.votingEnd,
             p.yesVotes,
             p.noVotes,
+            p.voterCount,
             getProposalStatus(_proposalId)
         );
     }
