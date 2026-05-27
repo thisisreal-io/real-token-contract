@@ -15,6 +15,10 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
+interface ICirculatingSupplyOracle {
+    function getCirculatingSupply() external view returns (uint256);
+}
+
 contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
 
@@ -39,12 +43,9 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
     // ─────────────────────────────────────────────────────────────────────
 
     IERC20 public realToken;
+    ICirculatingSupplyOracle public supplyOracle;
     address public deployer;
     address[5] public authorizedWallets;
-
-    // Excluded wallets for circulating supply calculation
-    address[] public excludedWalletList;
-    mapping(address => bool) public isExcludedWallet;
 
     // Proposals
     uint256 public proposalCount;
@@ -64,6 +65,10 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
 
     // Per-proposal pause
     mapping(uint256 => bool) public proposalPaused;
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Structs & Enums
+    // ─────────────────────────────────────────────────────────────────────
 
     enum ProposalStatus {
         Pending,    // Created but voting not started
@@ -119,10 +124,9 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
     event SystemUnpaused(bytes32 indexed actionId, address indexed triggeredBy);
     event ProposalPausedEvent(uint256 indexed proposalId, bytes32 indexed actionId);
     event ProposalUnpausedEvent(uint256 indexed proposalId, bytes32 indexed actionId);
-    event ExcludedWalletAdded(address indexed wallet);
-    event ExcludedWalletRemoved(address indexed wallet);
     event ActionSigned(bytes32 indexed actionId, address indexed signer, uint256 signatureCount);
     event AuthorizedWalletUpdated(uint256 indexed index, address oldWallet, address newWallet);
+    event SupplyOracleUpdated(address oldOracle, address newOracle);
 
     // ─────────────────────────────────────────────────────────────────────
     // Modifiers
@@ -154,25 +158,19 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
 
     function initialize(
         address _realToken,
-        address[5] memory _authorizedWallets,
-        address[] memory _initialExcludedWallets
+        address _supplyOracle,
+        address[5] memory _authorizedWallets
     ) external initializer {
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
 
         require(_realToken != address(0), "DAO: invalid token address");
+        require(_supplyOracle != address(0), "DAO: invalid oracle address");
 
         realToken = IERC20(_realToken);
+        supplyOracle = ICirculatingSupplyOracle(_supplyOracle);
         deployer = msg.sender;
         authorizedWallets = _authorizedWallets;
-
-        for (uint256 i = 0; i < _initialExcludedWallets.length; i++) {
-            address wallet = _initialExcludedWallets[i];
-            if (wallet != address(0) && !isExcludedWallet[wallet]) {
-                isExcludedWallet[wallet] = true;
-                excludedWalletList.push(wallet);
-            }
-        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -212,7 +210,7 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
         }
 
         uint256 proposalId = proposalCount++;
-        uint256 circulatingSnapshot = getCirculatingSupply();
+        uint256 circulatingSnapshot = supplyOracle.getCirculatingSupply();
 
         proposals[proposalId] = Proposal({
             proposer: msg.sender,
@@ -455,69 +453,16 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Circulating Supply Calculation
-    // ─────────────────────────────────────────────────────────────────────
-
-    /**
-     * @notice Calculate circulating supply by subtracting excluded wallets from total supply.
-     *         Excluded wallets include: this contract (DAO vault), vesting wallets,
-     *         sale contract, free contract, organization wallets, burn address.
-     */
-    function getCirculatingSupply() public view returns (uint256) {
-        uint256 totalSupply = realToken.totalSupply();
-        uint256 excludedBalance = 0;
-
-        for (uint256 i = 0; i < excludedWalletList.length; i++) {
-            excludedBalance += realToken.balanceOf(excludedWalletList[i]);
-        }
-
-        // Also exclude tokens held by this contract (the DAO vault itself)
-        excludedBalance += realToken.balanceOf(address(this));
-
-        if (excludedBalance >= totalSupply) {
-            return 0;
-        }
-        return totalSupply - excludedBalance;
-    }
-
-    /**
-     * @notice Get the voting power for a given token balance.
-     * @param _balance Raw REAL token balance (in wei, 18 decimals)
-     * @return Number of votes (1 vote per 1,000 REAL)
-     */
-    function getVotingPower(uint256 _balance) public pure returns (uint256) {
-        return _balance / TOKENS_PER_VOTE;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
     // Admin Functions (Deployer Only)
     // ─────────────────────────────────────────────────────────────────────
 
-    function addExcludedWallet(address _wallet) external onlyDeployer {
-        require(_wallet != address(0), "DAO: zero address");
-        require(!isExcludedWallet[_wallet], "DAO: already excluded");
+    function updateSupplyOracle(address _newOracle) external onlyDeployer {
+        require(_newOracle != address(0), "DAO: zero address");
 
-        isExcludedWallet[_wallet] = true;
-        excludedWalletList.push(_wallet);
+        address oldOracle = address(supplyOracle);
+        supplyOracle = ICirculatingSupplyOracle(_newOracle);
 
-        emit ExcludedWalletAdded(_wallet);
-    }
-
-    function removeExcludedWallet(address _wallet) external onlyDeployer {
-        require(isExcludedWallet[_wallet], "DAO: not excluded");
-
-        isExcludedWallet[_wallet] = false;
-
-        // Remove from array (swap and pop)
-        for (uint256 i = 0; i < excludedWalletList.length; i++) {
-            if (excludedWalletList[i] == _wallet) {
-                excludedWalletList[i] = excludedWalletList[excludedWalletList.length - 1];
-                excludedWalletList.pop();
-                break;
-            }
-        }
-
-        emit ExcludedWalletRemoved(_wallet);
+        emit SupplyOracleUpdated(oldOracle, _newOracle);
     }
 
     function updateAuthorizedWallet(uint256 _index, address _newWallet) external onlyDeployer {
@@ -533,6 +478,10 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
     // ─────────────────────────────────────────────────────────────────────
     // View Functions
     // ─────────────────────────────────────────────────────────────────────
+
+    function getCirculatingSupply() public view returns (uint256) {
+        return supplyOracle.getCirculatingSupply();
+    }
 
     function getProposalStatus(uint256 _proposalId) public view returns (ProposalStatus) {
         require(_proposalId < proposalCount, "DAO: invalid proposal");
@@ -600,10 +549,6 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
 
     function getVaultBalance() external view returns (uint256) {
         return realToken.balanceOf(address(this));
-    }
-
-    function getExcludedWallets() external view returns (address[] memory) {
-        return excludedWalletList;
     }
 
     function getTimeUntilExecution(uint256 _proposalId) external view returns (uint256) {
