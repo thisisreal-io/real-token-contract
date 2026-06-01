@@ -8,12 +8,12 @@
 
 pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable@5.1.0/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts@5.1.0/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts@5.1.0/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts@5.1.0/utils/cryptography/MerkleProof.sol";
 
 interface ICirculatingSupplyOracle {
     function getCirculatingSupply() external view returns (uint256);
@@ -507,38 +507,9 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
         return ProposalStatus.Failed;
     }
 
-    function getProposalDetails(uint256 _proposalId)
-        external
-        view
-        returns (
-            address proposer,
-            address recipient,
-            uint256 amount,
-            bytes32 merkleRoot,
-            uint256 circulatingSupplySnapshot,
-            uint256 votingStart,
-            uint256 votingEnd,
-            uint256 yesVotes,
-            uint256 noVotes,
-            uint256 voterCount,
-            ProposalStatus status
-        )
-    {
+    function getProposalDetails(uint256 _proposalId) external view returns (Proposal memory) {
         require(_proposalId < proposalCount, "DAO: invalid proposal");
-        Proposal storage p = proposals[_proposalId];
-        return (
-            p.proposer,
-            p.recipient,
-            p.amount,
-            p.merkleRoot,
-            p.circulatingSupplySnapshot,
-            p.votingStart,
-            p.votingEnd,
-            p.yesVotes,
-            p.noVotes,
-            p.voterCount,
-            getProposalStatus(_proposalId)
-        );
+        return proposals[_proposalId];
     }
 
     function getQuorumThreshold(uint256 _proposalId) external view returns (uint256) {
