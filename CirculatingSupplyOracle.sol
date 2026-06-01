@@ -58,8 +58,6 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
         address _realToken,
         address[] memory _initialExcludedWallets
     ) external initializer {
-        __UUPSUpgradeable_init();
-
         require(_realToken != address(0), "Oracle: invalid token address");
 
         realToken = IERC20(_realToken);
