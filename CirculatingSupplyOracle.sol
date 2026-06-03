@@ -4,6 +4,24 @@
 // Circulating Supply Oracle — Shared supply calculation for REAL ecosystem
 // https://ThisIsREAL.io    /    email: support@thisisreal.io
 // Used by: DAO Mint Protocol, Staking Contract (future), and other ecosystem contracts.
+//
+// Supply model:
+//   Circulating Supply = totalSupply() - non-circulating (vesting / vNFT) balances
+//   Burns reduce totalSupply() automatically, so burned tokens are already excluded.
+//   (Matches the tokenomics formula: Circulating = Total - vNFT - Burn)
+//
+//   Two distinct wallet categories are tracked:
+//     1. Non-circulating wallets (vesting / vNFT, locked reserves):
+//        - SUBTRACTED from circulating supply.
+//        - Also barred from voting.
+//     2. Vote-excluded wallets (SAFE / organization wallets):
+//        - COUNTED as circulating (these tokens can be sold at any time).
+//        - Barred from voting only.
+//
+//   Note: full vesting-holder vote exclusion is built off-chain in the DAO Merkle tree
+//   (the backend reads these lists plus VestingFactory.deployedContracts). The on-chain
+//   non-circulating list is intentionally bounded/deployer-managed to keep
+//   getCirculatingSupply() gas-safe (it is called on-chain by the DAO).
 
 pragma solidity ^0.8.28;
 
@@ -20,15 +38,24 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     IERC20 public realToken;
     address public deployer;
 
-    address[] public excludedWalletList;
-    mapping(address => bool) public isExcludedWallet;
+    // Non-circulating wallets (vesting / vNFT, locked reserves).
+    // Subtracted from circulating supply AND barred from voting.
+    address[] public nonCirculatingWallets;
+    mapping(address => bool) public isNonCirculating;
+
+    // Vote-excluded wallets (SAFE / organization wallets).
+    // Counted as circulating, but barred from voting.
+    address[] public voteExcludedWallets;
+    mapping(address => bool) public isVoteExcluded;
 
     // ─────────────────────────────────────────────────────────────────────
     // Events
     // ─────────────────────────────────────────────────────────────────────
 
-    event ExcludedWalletAdded(address indexed wallet);
-    event ExcludedWalletRemoved(address indexed wallet);
+    event NonCirculatingWalletAdded(address indexed wallet);
+    event NonCirculatingWalletRemoved(address indexed wallet);
+    event VoteExcludedWalletAdded(address indexed wallet);
+    event VoteExcludedWalletRemoved(address indexed wallet);
 
     // ─────────────────────────────────────────────────────────────────────
     // Modifiers
@@ -49,25 +76,36 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     }
 
     /**
-     * @notice Initialize the oracle with the REAL token and initial excluded wallets.
+     * @notice Initialize the oracle with the REAL token and the two wallet lists.
      * @param _realToken Address of the REAL ERC-20 token
-     * @param _initialExcludedWallets Wallets to exclude from circulating supply
-     *        (vesting wallets, sale contract, free contract, org wallets, burn address, etc.)
+     * @param _initialNonCirculatingWallets Vesting / vNFT / locked reserve wallets
+     *        (subtracted from circulating supply, and barred from voting)
+     * @param _initialVoteExcludedWallets SAFE / organization wallets
+     *        (counted as circulating, but barred from voting)
      */
     function initialize(
         address _realToken,
-        address[] memory _initialExcludedWallets
+        address[] memory _initialNonCirculatingWallets,
+        address[] memory _initialVoteExcludedWallets
     ) external initializer {
         require(_realToken != address(0), "Oracle: invalid token address");
 
         realToken = IERC20(_realToken);
         deployer = msg.sender;
 
-        for (uint256 i = 0; i < _initialExcludedWallets.length; i++) {
-            address wallet = _initialExcludedWallets[i];
-            if (wallet != address(0) && !isExcludedWallet[wallet]) {
-                isExcludedWallet[wallet] = true;
-                excludedWalletList.push(wallet);
+        for (uint256 i = 0; i < _initialNonCirculatingWallets.length; i++) {
+            address wallet = _initialNonCirculatingWallets[i];
+            if (wallet != address(0) && !isNonCirculating[wallet] && !isVoteExcluded[wallet]) {
+                isNonCirculating[wallet] = true;
+                nonCirculatingWallets.push(wallet);
+            }
+        }
+
+        for (uint256 i = 0; i < _initialVoteExcludedWallets.length; i++) {
+            address wallet = _initialVoteExcludedWallets[i];
+            if (wallet != address(0) && !isVoteExcluded[wallet] && !isNonCirculating[wallet]) {
+                isVoteExcluded[wallet] = true;
+                voteExcludedWallets.push(wallet);
             }
         }
     }
@@ -77,23 +115,20 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Calculate circulating supply: totalSupply minus all excluded wallet balances.
-     *         Excluded wallets include: DAO vault, vesting wallets, sale contract,
-     *         free contract, organization wallets, burn address.
+     * @notice Circulating supply = totalSupply minus all non-circulating (vesting/vNFT)
+     *         balances. SAFE / vote-excluded wallets are NOT subtracted — their tokens
+     *         are considered circulating (sellable at any time). Burns already reduce
+     *         totalSupply, so burned tokens are excluded automatically.
      * @return Circulating supply in token wei (18 decimals)
      */
     function getCirculatingSupply() external view returns (uint256) {
         uint256 totalSupply = realToken.totalSupply();
-        uint256 excludedBalance = 0;
+        uint256 nonCirculating = _nonCirculatingBalance();
 
-        for (uint256 i = 0; i < excludedWalletList.length; i++) {
-            excludedBalance += realToken.balanceOf(excludedWalletList[i]);
-        }
-
-        if (excludedBalance >= totalSupply) {
+        if (nonCirculating >= totalSupply) {
             return 0;
         }
-        return totalSupply - excludedBalance;
+        return totalSupply - nonCirculating;
     }
 
     /**
@@ -105,63 +140,112 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
         return _balance / (1_000 * 1e18);
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Admin Functions (Deployer Only)
-    // ─────────────────────────────────────────────────────────────────────
-
-    function addExcludedWallet(address _wallet) external onlyDeployer {
-        require(_wallet != address(0), "Oracle: zero address");
-        require(!isExcludedWallet[_wallet], "Oracle: already excluded");
-
-        isExcludedWallet[_wallet] = true;
-        excludedWalletList.push(_wallet);
-
-        emit ExcludedWalletAdded(_wallet);
+    /**
+     * @notice Whether a wallet is barred from voting on DAO proposals.
+     *         True for both non-circulating (vesting/vNFT) and vote-excluded (SAFE) wallets.
+     *         Used by the DAO as an on-chain guard, and by the backend when building Merkle trees.
+     */
+    function isVotingExcluded(address _wallet) external view returns (bool) {
+        return isNonCirculating[_wallet] || isVoteExcluded[_wallet];
     }
 
-    function removeExcludedWallet(address _wallet) external onlyDeployer {
-        require(isExcludedWallet[_wallet], "Oracle: not excluded");
+    // ─────────────────────────────────────────────────────────────────────
+    // Admin Functions (Deployer Only) — Non-Circulating List
+    // ─────────────────────────────────────────────────────────────────────
 
-        isExcludedWallet[_wallet] = false;
+    function addNonCirculatingWallet(address _wallet) external onlyDeployer {
+        require(_wallet != address(0), "Oracle: zero address");
+        require(!isNonCirculating[_wallet], "Oracle: already non-circulating");
+        require(!isVoteExcluded[_wallet], "Oracle: already vote-excluded");
 
-        for (uint256 i = 0; i < excludedWalletList.length; i++) {
-            if (excludedWalletList[i] == _wallet) {
-                excludedWalletList[i] = excludedWalletList[excludedWalletList.length - 1];
-                excludedWalletList.pop();
-                break;
-            }
-        }
+        isNonCirculating[_wallet] = true;
+        nonCirculatingWallets.push(_wallet);
 
-        emit ExcludedWalletRemoved(_wallet);
+        emit NonCirculatingWalletAdded(_wallet);
+    }
+
+    function removeNonCirculatingWallet(address _wallet) external onlyDeployer {
+        require(isNonCirculating[_wallet], "Oracle: not non-circulating");
+
+        isNonCirculating[_wallet] = false;
+        _removeFromList(nonCirculatingWallets, _wallet);
+
+        emit NonCirculatingWalletRemoved(_wallet);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Admin Functions (Deployer Only) — Vote-Excluded List
+    // ─────────────────────────────────────────────────────────────────────
+
+    function addVoteExcludedWallet(address _wallet) external onlyDeployer {
+        require(_wallet != address(0), "Oracle: zero address");
+        require(!isVoteExcluded[_wallet], "Oracle: already vote-excluded");
+        require(!isNonCirculating[_wallet], "Oracle: already non-circulating");
+
+        isVoteExcluded[_wallet] = true;
+        voteExcludedWallets.push(_wallet);
+
+        emit VoteExcludedWalletAdded(_wallet);
+    }
+
+    function removeVoteExcludedWallet(address _wallet) external onlyDeployer {
+        require(isVoteExcluded[_wallet], "Oracle: not vote-excluded");
+
+        isVoteExcluded[_wallet] = false;
+        _removeFromList(voteExcludedWallets, _wallet);
+
+        emit VoteExcludedWalletRemoved(_wallet);
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // View Functions
     // ─────────────────────────────────────────────────────────────────────
 
-    function getExcludedWallets() external view returns (address[] memory) {
-        return excludedWalletList;
+    function getNonCirculatingWallets() external view returns (address[] memory) {
+        return nonCirculatingWallets;
     }
 
-    function getExcludedWalletCount() external view returns (uint256) {
-        return excludedWalletList.length;
+    function getNonCirculatingWalletCount() external view returns (uint256) {
+        return nonCirculatingWallets.length;
+    }
+
+    function getVoteExcludedWallets() external view returns (address[] memory) {
+        return voteExcludedWallets;
+    }
+
+    function getVoteExcludedWalletCount() external view returns (uint256) {
+        return voteExcludedWallets.length;
     }
 
     function getTotalSupply() external view returns (uint256) {
         return realToken.totalSupply();
     }
 
-    function getExcludedBalance() external view returns (uint256) {
-        uint256 excluded = 0;
-        for (uint256 i = 0; i < excludedWalletList.length; i++) {
-            excluded += realToken.balanceOf(excludedWalletList[i]);
-        }
-        return excluded;
+    function getNonCirculatingBalance() external view returns (uint256) {
+        return _nonCirculatingBalance();
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // Internal
     // ─────────────────────────────────────────────────────────────────────
+
+    function _nonCirculatingBalance() internal view returns (uint256) {
+        uint256 total = 0;
+        for (uint256 i = 0; i < nonCirculatingWallets.length; i++) {
+            total += realToken.balanceOf(nonCirculatingWallets[i]);
+        }
+        return total;
+    }
+
+    function _removeFromList(address[] storage list, address _wallet) internal {
+        for (uint256 i = 0; i < list.length; i++) {
+            if (list[i] == _wallet) {
+                list[i] = list[list.length - 1];
+                list.pop();
+                break;
+            }
+        }
+    }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyDeployer {}
 }

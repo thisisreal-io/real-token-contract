@@ -17,6 +17,7 @@ import "@openzeppelin/contracts@5.1.0/utils/cryptography/MerkleProof.sol";
 
 interface ICirculatingSupplyOracle {
     function getCirculatingSupply() external view returns (uint256);
+    function isVotingExcluded(address _wallet) external view returns (bool);
 }
 
 contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
@@ -183,6 +184,8 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
      * @param _amount Amount of REAL tokens requested (max 1,000,000)
      * @param _merkleRoot Merkle root of eligible voters (address, votingPower) pairs.
      *        Computed off-chain: only wallets holding REAL for 30+ days at snapshot.
+     *        MUST exclude all non-circulating (vesting/vNFT) and vote-excluded (SAFE/org)
+     *        wallets — see the oracle's isVotingExcluded() and VestingFactory.deployedContracts.
      * @param _votingStart Unix timestamp when voting begins
      * @param _votingEnd Unix timestamp when voting ends (must be < 30 days from start)
      */
@@ -267,6 +270,11 @@ contract DAOMintProtocol is Initializable, UUPSUpgradeable, ReentrancyGuardUpgra
         require(block.timestamp <= proposal.votingEnd, "DAO: voting ended");
         require(!hasVoted[_proposalId][msg.sender], "DAO: already voted");
         require(_votingPower > 0, "DAO: zero voting power");
+
+        // On-chain guard (defense in depth): non-circulating (vesting/vNFT) and
+        // vote-excluded (SAFE/org) wallets are barred from voting, even if a faulty
+        // Merkle root were to include them.
+        require(!supplyOracle.isVotingExcluded(msg.sender), "DAO: wallet excluded from voting");
 
         // Verify Merkle proof: leaf = keccak256(abi.encodePacked(voter, votingPower))
         bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _votingPower));
