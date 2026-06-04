@@ -7,6 +7,10 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
+interface IVestingFactoryCallback {
+    function notifyRelease(uint256 amount) external;
+}
+
 contract Vesting is ReentrancyGuard {
     using Strings for address;
     using Strings for uint;
@@ -265,6 +269,10 @@ contract Vesting is ReentrancyGuard {
 
         evString = string(__unlockingMemo);
         memo.push(evString);
+
+        // Report the release to the factory so its live `totalLocked` counter (read by the
+        // CirculatingSupplyOracle) stays accurate — released tokens re-enter circulating supply.
+        IVestingFactoryCallback(factory).notifyRelease(amountToSent);
 
         SafeERC20.safeTransfer(token, msg.sender, amountToSent);
 

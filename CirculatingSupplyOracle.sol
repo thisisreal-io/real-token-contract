@@ -6,28 +6,36 @@
 // Used by: DAO Mint Protocol, Staking Contract (future), and other ecosystem contracts.
 //
 // Supply model:
-//   Circulating Supply = totalSupply() - non-circulating (vesting / vNFT) balances
+//   Circulating Supply = totalSupply() - vesting (vNFT) locked balances - manual non-circulating balances
 //   Burns reduce totalSupply() automatically, so burned tokens are already excluded.
 //   (Matches the tokenomics formula: Circulating = Total - vNFT - Burn)
 //
-//   Two distinct wallet categories are tracked:
-//     1. Non-circulating wallets (vesting / vNFT, locked reserves):
-//        - SUBTRACTED from circulating supply.
-//        - Also barred from voting.
-//     2. Vote-excluded wallets (SAFE / organization wallets):
-//        - COUNTED as circulating (these tokens can be sold at any time).
-//        - Barred from voting only.
+//   Vesting (vNFT) — AUTOMATIC & GAS-SAFE (O(1)):
+//     The oracle reads the VestingFactory's live `totalLocked` counter in a single call.
+//     The factory increments it when a user vests and decrements it on every release
+//     (Vesting.unlockFund -> VestingFactory.notifyRelease). This means:
+//       - When a user vests tokens, totalLocked rises, so those tokens become non-circulating
+//         automatically.
+//       - As vesting unlocks release tokens step-by-step, totalLocked falls, so the released
+//         amount re-enters circulating supply automatically.
+//     Because it is a single O(1) read, there is no unbounded loop and no gas/DoS concern.
 //
-//   Note: full vesting-holder vote exclusion is built off-chain in the DAO Merkle tree
-//   (the backend reads these lists plus VestingFactory.deployedContracts). The on-chain
-//   non-circulating list is intentionally bounded/deployer-managed to keep
-//   getCirculatingSupply() gas-safe (it is called on-chain by the DAO).
+//   Manual non-circulating wallets (optional):
+//     For locked reserves that are NOT vesting contracts. Subtracted from circulating supply.
+//
+//   Vote-excluded wallets (SAFE / organization wallets):
+//     Counted as circulating (sellable at any time), but barred from voting.
 
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts@5.1.0/token/ERC20/IERC20.sol";
+
+interface IVestingFactory {
+    function totalLocked() external view returns (uint256);
+    function getTotalDeployedContracts() external view returns (uint256);
+}
 
 contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
 
@@ -38,7 +46,11 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     IERC20 public realToken;
     address public deployer;
 
-    // Non-circulating wallets (vesting / vNFT, locked reserves).
+    // Vesting factory — its deployed vesting contracts hold all locked (vNFT) tokens.
+    // Their live balances are subtracted from circulating supply automatically.
+    IVestingFactory public vestingFactory;
+
+    // Manual non-circulating wallets (locked reserves that are NOT vesting contracts).
     // Subtracted from circulating supply AND barred from voting.
     address[] public nonCirculatingWallets;
     mapping(address => bool) public isNonCirculating;
@@ -52,6 +64,7 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     // Events
     // ─────────────────────────────────────────────────────────────────────
 
+    event VestingFactoryUpdated(address indexed oldFactory, address indexed newFactory);
     event NonCirculatingWalletAdded(address indexed wallet);
     event NonCirculatingWalletRemoved(address indexed wallet);
     event VoteExcludedWalletAdded(address indexed wallet);
@@ -76,21 +89,24 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     }
 
     /**
-     * @notice Initialize the oracle with the REAL token and the two wallet lists.
+     * @notice Initialize the oracle.
      * @param _realToken Address of the REAL ERC-20 token
-     * @param _initialNonCirculatingWallets Vesting / vNFT / locked reserve wallets
+     * @param _vestingFactory Address of the VestingFactory (may be address(0); set later via setVestingFactory)
+     * @param _initialNonCirculatingWallets Non-vesting locked reserve wallets
      *        (subtracted from circulating supply, and barred from voting)
      * @param _initialVoteExcludedWallets SAFE / organization wallets
      *        (counted as circulating, but barred from voting)
      */
     function initialize(
         address _realToken,
+        address _vestingFactory,
         address[] memory _initialNonCirculatingWallets,
         address[] memory _initialVoteExcludedWallets
     ) external initializer {
         require(_realToken != address(0), "Oracle: invalid token address");
 
         realToken = IERC20(_realToken);
+        vestingFactory = IVestingFactory(_vestingFactory);
         deployer = msg.sender;
 
         for (uint256 i = 0; i < _initialNonCirculatingWallets.length; i++) {
@@ -115,10 +131,12 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Circulating supply = totalSupply minus all non-circulating (vesting/vNFT)
-     *         balances. SAFE / vote-excluded wallets are NOT subtracted — their tokens
-     *         are considered circulating (sellable at any time). Burns already reduce
-     *         totalSupply, so burned tokens are excluded automatically.
+     * @notice Circulating supply = totalSupply minus vesting (vNFT) locked balance and
+     *         minus manual non-circulating balances. Vesting is handled automatically via the
+     *         VestingFactory's O(1) totalLocked counter — newly vested tokens drop out of
+     *         circulation and released tokens flow back in, with no admin action.
+     *         SAFE / vote-excluded wallets are NOT subtracted (their tokens are circulating).
+     *         Burns already reduce totalSupply, so burned tokens are excluded automatically.
      * @return Circulating supply in token wei (18 decimals)
      */
     function getCirculatingSupply() external view returns (uint256) {
@@ -142,15 +160,26 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
 
     /**
      * @notice Whether a wallet is barred from voting on DAO proposals.
-     *         True for both non-circulating (vesting/vNFT) and vote-excluded (SAFE) wallets.
+     *         True for both manual non-circulating and vote-excluded (SAFE) wallets.
      *         Used by the DAO as an on-chain guard, and by the backend when building Merkle trees.
+     *         (Vesting-holder voting exclusion is enforced off-chain in the Merkle tree.)
      */
     function isVotingExcluded(address _wallet) external view returns (bool) {
         return isNonCirculating[_wallet] || isVoteExcluded[_wallet];
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Admin Functions (Deployer Only) — Non-Circulating List
+    // Admin Functions (Deployer Only) — Vesting Factory
+    // ─────────────────────────────────────────────────────────────────────
+
+    function setVestingFactory(address _vestingFactory) external onlyDeployer {
+        address old = address(vestingFactory);
+        vestingFactory = IVestingFactory(_vestingFactory);
+        emit VestingFactoryUpdated(old, _vestingFactory);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Admin Functions (Deployer Only) — Manual Non-Circulating List
     // ─────────────────────────────────────────────────────────────────────
 
     function addNonCirculatingWallet(address _wallet) external onlyDeployer {
@@ -221,8 +250,25 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
         return realToken.totalSupply();
     }
 
+    /// @notice Total currently-locked vesting balance (the factory's live totalLocked counter).
+    function getVestingLockedBalance() external view returns (uint256) {
+        return _vestingLockedBalance();
+    }
+
+    /// @notice Manual (non-vesting) non-circulating balance only.
+    function getManualNonCirculatingBalance() external view returns (uint256) {
+        return _manualNonCirculatingBalance();
+    }
+
+    /// @notice Total non-circulating balance = vesting locked + manual non-circulating.
     function getNonCirculatingBalance() external view returns (uint256) {
         return _nonCirculatingBalance();
+    }
+
+    /// @notice Number of vesting contracts the oracle is tracking via the factory.
+    function getVestingContractCount() external view returns (uint256) {
+        if (address(vestingFactory) == address(0)) return 0;
+        return vestingFactory.getTotalDeployedContracts();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -230,11 +276,23 @@ contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
     // ─────────────────────────────────────────────────────────────────────
 
     function _nonCirculatingBalance() internal view returns (uint256) {
+        return _manualNonCirculatingBalance() + _vestingLockedBalance();
+    }
+
+    function _manualNonCirculatingBalance() internal view returns (uint256) {
         uint256 total = 0;
         for (uint256 i = 0; i < nonCirculatingWallets.length; i++) {
             total += realToken.balanceOf(nonCirculatingWallets[i]);
         }
         return total;
+    }
+
+    function _vestingLockedBalance() internal view returns (uint256) {
+        if (address(vestingFactory) == address(0)) {
+            return 0;
+        }
+        // O(1): read the factory's live locked counter (incremented on vest, decremented on release).
+        return vestingFactory.totalLocked();
     }
 
     function _removeFromList(address[] storage list, address _wallet) internal {
