@@ -13,9 +13,10 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
     IERC20 public immutable realToken;
     VestingReceiptNFT public immutable vestingReceiptNFT;
     address[] public deployedContracts;
-    uint256 public totalLocked;
+    uint256 public totalLocked; // Live total of tokens currently locked across all vesting contracts
 
     mapping(address => address[]) public contractsOwners;
+    mapping(address => bool) public isDeployedVesting; // True for vesting contracts created by this factory
 
     // Maximum memo length in bytes (256 bytes = ~256 ASCII characters)
     uint256 public constant MAX_MEMO_BYTES = 256;
@@ -26,6 +27,12 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         address indexed _deployerAddress,
         uint256 _vestingAmount,
         uint256 _nftTokenId
+    );
+
+    event VestingReleaseReported(
+        address indexed vestingContract,
+        uint256 amountReleased,
+        uint256 newTotalLocked
     );
 
     constructor(
@@ -73,6 +80,7 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
         address _vestingAddress = address(deployedVesting);
         deployedContracts.push(_vestingAddress);
         contractsOwners[msg.sender].push(_vestingAddress);
+        isDeployedVesting[_vestingAddress] = true;
 
         SafeERC20.safeTransferFrom(
             realToken,
@@ -102,6 +110,25 @@ contract VestingFactory is Ownable, ReentrancyGuard, Pausable {
             actualLocked,
             nftTokenId
         );
+    }
+
+    /**
+     * @dev Called by a deployed Vesting contract whenever it releases (unlocks) tokens.
+     * Decrements the live `totalLocked` counter so it always reflects the tokens currently
+     * locked across all vesting contracts. Only callable by vesting contracts created here.
+     * @param _amount Amount of REAL released in this unlock
+     */
+    function notifyRelease(uint256 _amount) external {
+        require(isDeployedVesting[msg.sender], "Only deployed vesting can report");
+
+        // Clamp defensively to avoid underflow bricking a release if accounting ever drifts.
+        if (_amount >= totalLocked) {
+            totalLocked = 0;
+        } else {
+            totalLocked -= _amount;
+        }
+
+        emit VestingReleaseReported(msg.sender, _amount, totalLocked);
     }
 
     /**
