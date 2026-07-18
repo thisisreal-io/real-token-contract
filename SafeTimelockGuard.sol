@@ -10,8 +10,9 @@ pragma solidity >=0.8.0;
  * @author Real Estate Alliance League
  * @custom:website https://ThisIsREAL.io
  */
- 
+
 contract SafeTimelockGuard {
+    
     // Safe wallet address
     address public immutable safe;
     
