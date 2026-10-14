@@ -1,6 +1,6 @@
 # Supply oracle v2: developer review and deployment inputs
 
-This branch changes only the supply oracle and adds its isolated Cancun test harness. The proposed contract is a new UUPS implementation for a **new, atomically initialized ERC1967Proxy**. Its storage layout and initializer differ from the previously deployed Sepolia oracle. Do not upgrade the old Sepolia proxy to this implementation.
+This branch preserves `CirculatingSupplyOracle.sol` (V1) unchanged, adds `SupplyOracleV2.sol` as a separate contract, and adds its isolated Cancun test harness. V1 remains available for reference; deploying V2 does not alter V1. The proposed contract is a new UUPS implementation for a **new, atomically initialized ERC1967Proxy**. Its storage layout and initializer differ from the previously deployed Sepolia oracle. Do not upgrade the old Sepolia proxy to this implementation.
 
 ## Supply rules
 
@@ -19,7 +19,7 @@ The DAO continues to call `getCirculatingSupply()` and `isVotingExcluded(address
 ## Deployment inputs and checks
 
 1. Independently confirm the REAL token address on the intended chain. For mainnet the project-supplied address is `0x325Aa344761c19F7ab6dc45A95f01d6907A30DCA`. Confirm its 18 decimals, its current total supply and that minting is permanently unavailable.
-2. Deploy `CirculatingSupplyOracle` implementation using Solidity 0.8.28, optimizer enabled with 200 runs, Cancun EVM, OpenZeppelin Contracts and Contracts Upgradeable **5.1.0**. The implementation constructor disables direct initialization.
+2. Deploy `SupplyOracleV2` implementation using Solidity 0.8.28, optimizer enabled with 200 runs, Cancun EVM, OpenZeppelin Contracts and Contracts Upgradeable **5.1.0**. The implementation constructor disables direct initialization.
 3. Encode `initialize(initialOwner, tokenAddress, totalIssuedEver, firstFactory, initialDaoWallet, initialLpBurnAddress, initialVoteExcludedWallets)` and pass the bytes **in the ERC1967Proxy constructor transaction**. `initialOwner` should be the chosen admin Safe. Mainnet `totalIssuedEver` is 100 million REAL in base units if independently verified; testnet needs its own historical cumulative minted amount including any destroyed tokens. Set unknown future addresses to zero and configure them later.
 4. Check the proxy owner, token, baseline, DAO address, factory list, vote exclusions and the circulating calculation on chain before relying on the figures. Configure ETH and USDC V2-style LP pairs only after verifying the REAL/quote tokens and the intended LP burn address. The quote-token parameter must be the actual WETH or USDC token for that pool.
 5. Deploy a **fresh Sepolia proxy** and verify the build and behavior there before mainnet. The old Sepolia proxy's layout is incompatible. Have a separate security reviewer verify the full implementation, deployment transaction and eventual chain state.
