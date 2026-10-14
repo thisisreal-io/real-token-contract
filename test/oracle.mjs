@@ -5,11 +5,11 @@ import solc from 'solc';
 import {ethers} from 'ethers';
 
 const root = path.resolve(import.meta.dirname, '..');
-const source = fs.readFileSync(path.join(root, 'CirculatingSupplyOracle.sol'), 'utf8');
+const source = fs.readFileSync(path.join(root, 'SupplyOracleV2.sol'), 'utf8');
 const mocks = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 import {ERC20} from "@openzeppelin/contracts@5.1.0/token/ERC20/ERC20.sol";
-import {CirculatingSupplyOracle} from "./CirculatingSupplyOracle.sol";
+import {SupplyOracleV2} from "./SupplyOracleV2.sol";
 contract TestToken is ERC20 {
     constructor() ERC20("REAL", "REAL") { _mint(msg.sender, 100_000_000 ether); }
     function burn(uint256 amount) external { _burn(msg.sender, amount); }
@@ -29,12 +29,12 @@ contract TestPair is ERC20 {
     constructor(address a, address b) ERC20("LP", "LP") { token0 = a; token1 = b; }
     function mint(address recipient, uint256 amount) external { _mint(recipient, amount); }
 }
-contract OracleV2 is CirculatingSupplyOracle {
+contract OracleV2 is SupplyOracleV2 {
     function version() external pure returns (uint256) { return 2; }
 }
 `;
 const input = {language:'Solidity', sources:{
-    'CirculatingSupplyOracle.sol':{content:source},
+    'SupplyOracleV2.sol':{content:source},
     'Mocks.sol':{content:mocks},
     '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol':{content:readImport('@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol')}
 },settings:{optimizer:{enabled:true,runs:200},evmVersion:'cancun',outputSelection:{'*':{'*':['abi','evm.bytecode.object']}}}};
@@ -61,8 +61,8 @@ const addr=async signer=>signer.getAddress();
 const token=await deploy('Mocks.sol','TestToken',admin);
 const tokenAddress=await token.getAddress();
 const factory=await deploy('Mocks.sol','TestFactory',admin,[tokenAddress]);
-const impl=await deploy('CirculatingSupplyOracle.sol','CirculatingSupplyOracle',admin);
-const abi=artifact('CirculatingSupplyOracle.sol','CirculatingSupplyOracle').abi;
+const impl=await deploy('SupplyOracleV2.sol','SupplyOracleV2',admin);
+const abi=artifact('SupplyOracleV2.sol','SupplyOracleV2').abi;
 const init=new ethers.Interface(abi).encodeFunctionData('initialize',[
     await addr(nextOwner),tokenAddress,ethers.parseEther('100000000'),await factory.getAddress(),
     await addr(dao),await addr(burnWallet),[await addr(safe),await addr(safe),ethers.ZeroAddress]
