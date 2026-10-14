@@ -1,277 +1,270 @@
 // SPDX-License-Identifier: MIT
+
+// Real Estate Alliance League, Illinois, USA
+// Circulating Supply Oracle — Shared supply calculation for REAL ecosystem
+// https://ThisIsREAL.io    /    email: support@thisisreal.io
+// Used by: DAO Mint Protocol, Staking Contract (future), and other ecosystem contracts.
+//
+// Supply model:
+//   Circulating Supply = totalSupply() - vNFT (vesting) locked - DAO wallet balance
+//   Burns reduce totalSupply() automatically, so burned tokens are already excluded.
+//   (Circulating = Total - vNFT - DAO vault - Burn)
+//
+//   Excluded from CIRCULATING SUPPLY (subtracted):
+//     1. vNFT vesting — AUTOMATIC & GAS-SAFE (O(1)) via VestingFactory.totalLocked.
+//        The factory increments it when a user vests and decrements it on every release
+//        (Vesting.unlockFund -> VestingFactory.notifyRelease), so newly vested tokens drop
+//        out of circulation and released tokens flow back in with no admin action.
+//     2. DAO wallet — a SINGLE address (the DAO mint vault) holding tokens that are released
+//        only if DAO voting reaches the required threshold. Its live balance is subtracted.
+//     3. Burn — automatic (totalSupply already reflects burns).
+//
+//   Excluded from VOTING only (these tokens STILL count as circulating):
+//     SAFE wallets and Corp / team wallets — tracked in voteExcludedWallets.
+//     The DAO wallet is also barred from voting.
+
 pragma solidity ^0.8.28;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/Initializable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/UUPSUpgradeable.sol";
-import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable@5.1.0/access/Ownable2StepUpgradeable.sol";
-import {IERC20} from "@openzeppelin/contracts@5.1.0/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts@5.1.0/token/ERC20/IERC20.sol";
 
-interface IVestingFactorySupply {
-    function realToken() external view returns (address);
+interface IVestingFactory {
     function totalLocked() external view returns (uint256);
     function getTotalDeployedContracts() external view returns (uint256);
 }
 
-interface IRealV2Pair is IERC20 {
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-}
+contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable {
 
-/// @notice Read-only supply accounting for REAL. This oracle never holds tokens.
-/// @dev Deploy a NEW ERC1967Proxy, atomically initializing it with the intended owner.
-///      This version has a new storage layout and is not a drop-in upgrade for the old Sepolia proxy.
-contract CirculatingSupplyOracle is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
-    uint256 public constant MAX_SUPPLY = 100_000_000 ether;
-    uint256 public constant MAX_VESTING_FACTORIES = 32;
+    // ─────────────────────────────────────────────────────────────────────
+    // State Variables
+    // ─────────────────────────────────────────────────────────────────────
 
     IERC20 public realToken;
-    uint256 public issuedSupplyBaseline;
-    IVestingFactorySupply public vestingFactory; // First factory, retained as a compatibility getter.
-    IVestingFactorySupply[] private _additionalFactories;
-    mapping(address => bool) public isVestingFactory;
+    address public deployer;
+
+    // Vesting factory — its deployed vesting contracts hold all locked (vNFT) tokens.
+    // Its live `totalLocked` counter is subtracted from circulating supply automatically.
+    IVestingFactory public vestingFactory;
+
+    // DAO wallet (single address): the DAO mint vault. Holds tokens that are released only
+    // when DAO voting passes. Its live balance is subtracted from circulating supply AND
+    // it is barred from voting.
     address public daoWallet;
-    address public lpBurnAddress;
-    IRealV2Pair public ethLpPair;
-    IRealV2Pair public usdcLpPair;
-    address public ethQuoteToken;
-    address public usdcQuoteToken;
+
+    // Vote-excluded wallets (SAFE wallets and Corp / team wallets).
+    // Counted as CIRCULATING, but barred from voting.
     address[] public voteExcludedWallets;
     mapping(address => bool) public isVoteExcluded;
 
-    error InvalidAddress();
-    error InvalidIssuedSupply();
-    error SupplyIncreasedAfterBaseline();
-    error InvalidSupplyAccounting(uint256 totalSupply, uint256 nonCirculating);
-    error InvalidFactory();
-    error FactoryAlreadyRegistered();
-    error FactoryLimitReached();
-    error FactoryAlreadySet();
-    error InvalidPair();
-    error RenounceDisabled();
+    // ─────────────────────────────────────────────────────────────────────
+    // Events
+    // ─────────────────────────────────────────────────────────────────────
 
-    event VestingFactoryAdded(address indexed factory);
+    event VestingFactoryUpdated(address indexed oldFactory, address indexed newFactory);
     event DaoWalletUpdated(address indexed oldWallet, address indexed newWallet);
-    event LpBurnAddressUpdated(address indexed oldAddress, address indexed newAddress);
-    event EthLpPairUpdated(address indexed pair, address indexed quoteToken);
-    event UsdcLpPairUpdated(address indexed pair, address indexed quoteToken);
     event VoteExcludedWalletAdded(address indexed wallet);
     event VoteExcludedWalletRemoved(address indexed wallet);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Modifiers
+    // ─────────────────────────────────────────────────────────────────────
+
+    modifier onlyDeployer() {
+        require(msg.sender == deployer, "Oracle: only deployer");
+        _;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Initializer
+    // ─────────────────────────────────────────────────────────────────────
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    /// @param initialOwner Address that controls oracle settings and UUPS upgrades (prefer a Safe).
-    /// @param tokenAddress REAL token on this chain.
-    /// @param totalIssuedEver Cumulative REAL minted before this deployment, including burned REAL.
-    ///        Mainnet: 100 million REAL; on Sepolia supply may be different. This assumes no later mint.
-    /// @param firstFactory Zero until a verified REAL VestingFactory has been deployed.
-    /// @param initialDaoWallet Zero until the DAO vault exists; Safe wallets are circulating.
-    /// @param initialLpBurnAddress Zero until the intended LP burn address is confirmed.
-    /// @param initialVoteExcludedWallets Wallets excluded from voting, but still circulating.
+    /**
+     * @notice Initialize the oracle.
+     * @param _realToken Address of the REAL ERC-20 token
+     * @param _vestingFactory Address of the VestingFactory (may be address(0); set later via setVestingFactory)
+     * @param _daoWallet The DAO mint vault address (may be address(0); set later via setDaoWallet).
+     *        Subtracted from circulating supply and barred from voting.
+     * @param _initialVoteExcludedWallets SAFE / Corp / team wallets
+     *        (counted as circulating, but barred from voting)
+     */
     function initialize(
-        address initialOwner,
-        address tokenAddress,
-        uint256 totalIssuedEver,
-        address firstFactory,
-        address initialDaoWallet,
-        address initialLpBurnAddress,
-        address[] calldata initialVoteExcludedWallets
+        address _realToken,
+        address _vestingFactory,
+        address _daoWallet,
+        address[] memory _initialVoteExcludedWallets
     ) external initializer {
-        if (initialOwner == address(0) || tokenAddress.code.length == 0) revert InvalidAddress();
-        __Ownable_init(initialOwner);
-        __Ownable2Step_init();
-        __UUPSUpgradeable_init();
+        require(_realToken != address(0), "Oracle: invalid token address");
 
-        realToken = IERC20(tokenAddress);
-        uint256 liveSupply = realToken.totalSupply();
-        if (totalIssuedEver < liveSupply || totalIssuedEver > MAX_SUPPLY) revert InvalidIssuedSupply();
-        issuedSupplyBaseline = totalIssuedEver;
-        daoWallet = initialDaoWallet;
-        lpBurnAddress = initialLpBurnAddress;
-        if (firstFactory != address(0)) _addFactory(firstFactory);
-        for (uint256 i; i < initialVoteExcludedWallets.length; ++i) {
-            address wallet = initialVoteExcludedWallets[i];
+        realToken = IERC20(_realToken);
+        vestingFactory = IVestingFactory(_vestingFactory);
+        daoWallet = _daoWallet;
+        deployer = msg.sender;
+
+        for (uint256 i = 0; i < _initialVoteExcludedWallets.length; i++) {
+            address wallet = _initialVoteExcludedWallets[i];
             if (wallet != address(0) && !isVoteExcluded[wallet]) {
                 isVoteExcluded[wallet] = true;
                 voteExcludedWallets.push(wallet);
-                emit VoteExcludedWalletAdded(wallet);
             }
         }
     }
 
-    // ERC-20 destruction reduces totalSupply already; this getter is for separate reporting.
-    // It does not count transfers to an inaccessible address. It assumes no mint after baseline.
-    function getBurnedSupply() external view returns (uint256) {
-        uint256 liveSupply = realToken.totalSupply();
-        if (liveSupply > issuedSupplyBaseline) revert SupplyIncreasedAfterBaseline();
-        return issuedSupplyBaseline - liveSupply;
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Core Function: Circulating Supply Calculation
+    // ─────────────────────────────────────────────────────────────────────
 
-    function getMaxSupply() external pure returns (uint256) { return MAX_SUPPLY; }
-    function getTotalSupply() external view returns (uint256) { return realToken.totalSupply(); }
-
+    /**
+     * @notice Circulating supply = totalSupply minus vNFT vesting locked balance minus the
+     *         DAO wallet balance. Vesting is handled automatically via the VestingFactory's
+     *         O(1) totalLocked counter. The DAO vault balance is subtracted live. SAFE / Corp
+     *         (vote-excluded) wallets are NOT subtracted — their tokens are circulating.
+     *         Burns already reduce totalSupply, so burned tokens are excluded automatically.
+     * @return Circulating supply in token wei (18 decimals)
+     */
     function getCirculatingSupply() external view returns (uint256) {
-        uint256 total = realToken.totalSupply();
-        uint256 nonCirculating = _vestingLockedBalance() + _daoWalletBalance();
-        if (nonCirculating > total) revert InvalidSupplyAccounting(total, nonCirculating);
-        return total - nonCirculating;
+        uint256 totalSupply = realToken.totalSupply();
+        uint256 nonCirculating = _nonCirculatingBalance();
+
+        if (nonCirculating >= totalSupply) {
+            return 0;
+        }
+        return totalSupply - nonCirculating;
     }
 
-    function getVestingLockedBalance() external view returns (uint256) { return _vestingLockedBalance(); }
-    function getDaoWalletBalance() external view returns (uint256) { return _daoWalletBalance(); }
+    /**
+     * @notice Get the voting power for a given token balance.
+     * @param _balance Raw REAL token balance (in wei, 18 decimals)
+     * @return Number of votes (1 vote per 1,000 REAL)
+     */
+    function getVotingPower(uint256 _balance) external pure returns (uint256) {
+        return _balance / (1_000 * 1e18);
+    }
+
+    /**
+     * @notice Whether a wallet is barred from voting on DAO proposals.
+     *         True for SAFE / Corp (vote-excluded) wallets and the DAO wallet.
+     *         Used by the DAO as an on-chain guard, and by the backend when building Merkle trees.
+     *         (Vesting-holder voting exclusion is enforced off-chain in the Merkle tree.)
+     */
+    function isVotingExcluded(address _wallet) external view returns (bool) {
+        if (_wallet == address(0)) return false;
+        return isVoteExcluded[_wallet] || _wallet == daoWallet;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Admin Functions (Deployer Only) — Configuration
+    // ─────────────────────────────────────────────────────────────────────
+
+    function setVestingFactory(address _vestingFactory) external onlyDeployer {
+        address old = address(vestingFactory);
+        vestingFactory = IVestingFactory(_vestingFactory);
+        emit VestingFactoryUpdated(old, _vestingFactory);
+    }
+
+    function setDaoWallet(address _daoWallet) external onlyDeployer {
+        address old = daoWallet;
+        daoWallet = _daoWallet;
+        emit DaoWalletUpdated(old, _daoWallet);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Admin Functions (Deployer Only) — Vote-Excluded List (SAFE / Corp)
+    // ─────────────────────────────────────────────────────────────────────
+
+    function addVoteExcludedWallet(address _wallet) external onlyDeployer {
+        require(_wallet != address(0), "Oracle: zero address");
+        require(!isVoteExcluded[_wallet], "Oracle: already vote-excluded");
+
+        isVoteExcluded[_wallet] = true;
+        voteExcludedWallets.push(_wallet);
+
+        emit VoteExcludedWalletAdded(_wallet);
+    }
+
+    function removeVoteExcludedWallet(address _wallet) external onlyDeployer {
+        require(isVoteExcluded[_wallet], "Oracle: not vote-excluded");
+
+        isVoteExcluded[_wallet] = false;
+        _removeFromList(voteExcludedWallets, _wallet);
+
+        emit VoteExcludedWalletRemoved(_wallet);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // View Functions
+    // ─────────────────────────────────────────────────────────────────────
+
+    function getVoteExcludedWallets() external view returns (address[] memory) {
+        return voteExcludedWallets;
+    }
+
+    function getVoteExcludedWalletCount() external view returns (uint256) {
+        return voteExcludedWallets.length;
+    }
+
+    function getTotalSupply() external view returns (uint256) {
+        return realToken.totalSupply();
+    }
+
+    /// @notice Total currently-locked vesting balance (the factory's live totalLocked counter).
+    function getVestingLockedBalance() external view returns (uint256) {
+        return _vestingLockedBalance();
+    }
+
+    /// @notice Live balance held by the DAO wallet (subtracted from circulating supply).
+    function getDaoWalletBalance() external view returns (uint256) {
+        return _daoWalletBalance();
+    }
+
+    /// @notice Total non-circulating balance = vesting locked + DAO wallet balance.
     function getNonCirculatingBalance() external view returns (uint256) {
+        return _nonCirculatingBalance();
+    }
+
+    /// @notice Number of vesting contracts the oracle is tracking via the factory.
+    function getVestingContractCount() external view returns (uint256) {
+        if (address(vestingFactory) == address(0)) return 0;
+        return vestingFactory.getTotalDeployedContracts();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Internal
+    // ─────────────────────────────────────────────────────────────────────
+
+    function _nonCirculatingBalance() internal view returns (uint256) {
         return _vestingLockedBalance() + _daoWalletBalance();
     }
 
-    function getVestingContractCount() external view returns (uint256 count) {
-        if (address(vestingFactory) != address(0)) count += vestingFactory.getTotalDeployedContracts();
-        for (uint256 i; i < _additionalFactories.length; ++i) {
-            count += _additionalFactories[i].getTotalDeployedContracts();
+    function _vestingLockedBalance() internal view returns (uint256) {
+        if (address(vestingFactory) == address(0)) {
+            return 0;
         }
-    }
-
-    function getVestingFactories() external view returns (address[] memory factories) {
-        uint256 first = address(vestingFactory) == address(0) ? 0 : 1;
-        factories = new address[](first + _additionalFactories.length);
-        if (first == 1) factories[0] = address(vestingFactory);
-        for (uint256 i; i < _additionalFactories.length; ++i) {
-            factories[first + i] = address(_additionalFactories[i]);
-        }
-    }
-
-    /// @dev Kept for existing integrations. It may only set an initially unset factory.
-    function setVestingFactory(address factory) external onlyOwner {
-        if (address(vestingFactory) != address(0)) revert FactoryAlreadySet();
-        _addFactory(factory);
-    }
-
-    function addVestingFactory(address factory) external onlyOwner { _addFactory(factory); }
-
-    function setDaoWallet(address wallet) external onlyOwner {
-        address old = daoWallet;
-        daoWallet = wallet;
-        emit DaoWalletUpdated(old, wallet);
-    }
-
-    function setLpBurnAddress(address burnAddress) external onlyOwner {
-        if (burnAddress == address(0)) revert InvalidAddress();
-        address old = lpBurnAddress;
-        lpBurnAddress = burnAddress;
-        emit LpBurnAddressUpdated(old, burnAddress);
-    }
-
-    /// @dev For Uniswap V2-style ERC-20 LP tokens. The pair must contain REAL and the stated quote token.
-    ///      Address zero clears a pair before it exists. Neither pool changes REAL circulating supply.
-    function setEthLpPair(address pair, address quoteToken) external onlyOwner {
-        _checkPair(pair, quoteToken, address(usdcLpPair));
-        ethLpPair = IRealV2Pair(pair);
-        ethQuoteToken = quoteToken;
-        emit EthLpPairUpdated(pair, quoteToken);
-    }
-
-    function setUsdcLpPair(address pair, address quoteToken) external onlyOwner {
-        _checkPair(pair, quoteToken, address(ethLpPair));
-        usdcLpPair = IRealV2Pair(pair);
-        usdcQuoteToken = quoteToken;
-        emit UsdcLpPairUpdated(pair, quoteToken);
-    }
-
-    function getEthLpBurned() external view returns (uint256) { return _lpBurned(ethLpPair); }
-    function getUsdcLpBurned() external view returns (uint256) { return _lpBurned(usdcLpPair); }
-    function getEthLpTotalSupply() external view returns (uint256) { return _lpTotal(ethLpPair); }
-    function getUsdcLpTotalSupply() external view returns (uint256) { return _lpTotal(usdcLpPair); }
-
-    // Voting exclusions do not remove Safe/corporate holdings from circulating supply.
-    function getVotingPower(uint256 balance) external pure returns (uint256) { return balance / (1_000 ether); }
-    function isVotingExcluded(address wallet) external view returns (bool) {
-        if (wallet == address(0)) return false;
-        return isVoteExcluded[wallet] || wallet == daoWallet;
-    }
-    function getVoteExcludedWallets() external view returns (address[] memory) { return voteExcludedWallets; }
-    function getVoteExcludedWalletCount() external view returns (uint256) { return voteExcludedWallets.length; }
-
-    function addVoteExcludedWallet(address wallet) external onlyOwner {
-        if (wallet == address(0) || isVoteExcluded[wallet]) revert InvalidAddress();
-        isVoteExcluded[wallet] = true;
-        voteExcludedWallets.push(wallet);
-        emit VoteExcludedWalletAdded(wallet);
-    }
-
-    function removeVoteExcludedWallet(address wallet) external onlyOwner {
-        if (!isVoteExcluded[wallet]) revert InvalidAddress();
-        isVoteExcluded[wallet] = false;
-        for (uint256 i; i < voteExcludedWallets.length; ++i) {
-            if (voteExcludedWallets[i] == wallet) {
-                voteExcludedWallets[i] = voteExcludedWallets[voteExcludedWallets.length - 1];
-                voteExcludedWallets.pop();
-                break;
-            }
-        }
-        emit VoteExcludedWalletRemoved(wallet);
-    }
-
-    /// @dev Compatibility for consumers of the earlier Sepolia oracle's deployer() getter.
-    function deployer() external view returns (address) { return owner(); }
-
-    /// @dev Losing admin control would prevent correcting future DAO/factory addresses.
-    function renounceOwnership() public pure override { revert RenounceDisabled(); }
-
-    function _authorizeUpgrade(address) internal override onlyOwner {}
-
-    function _addFactory(address factory) internal {
-        if (factory.code.length == 0) revert InvalidFactory();
-        if (isVestingFactory[factory]) revert FactoryAlreadyRegistered();
-        if (getFactoryCount() >= MAX_VESTING_FACTORIES) revert FactoryLimitReached();
-        IVestingFactorySupply candidate = IVestingFactorySupply(factory);
-        if (candidate.realToken() != address(realToken)) revert InvalidFactory();
-        // Validate the required interface before a factory can affect public supply reads.
-        candidate.totalLocked();
-        candidate.getTotalDeployedContracts();
-        if (address(vestingFactory) == address(0)) vestingFactory = candidate;
-        else _additionalFactories.push(candidate);
-        isVestingFactory[factory] = true;
-        emit VestingFactoryAdded(factory);
-    }
-
-    function getFactoryCount() public view returns (uint256) {
-        return (address(vestingFactory) == address(0) ? 0 : 1) + _additionalFactories.length;
-    }
-
-    function _vestingLockedBalance() internal view returns (uint256 total) {
-        if (address(vestingFactory) != address(0)) total += vestingFactory.totalLocked();
-        for (uint256 i; i < _additionalFactories.length; ++i) {
-            total += _additionalFactories[i].totalLocked();
-        }
+        // O(1): read the factory's live locked counter (incremented on vest, decremented on release).
+        return vestingFactory.totalLocked();
     }
 
     function _daoWalletBalance() internal view returns (uint256) {
-        return daoWallet == address(0) ? 0 : realToken.balanceOf(daoWallet);
+        if (daoWallet == address(0)) {
+            return 0;
+        }
+        return realToken.balanceOf(daoWallet);
     }
 
-    function _checkPair(address pair, address quote, address otherPair) internal view {
-        if (pair == address(0)) {
-            if (quote != address(0)) revert InvalidPair();
-            return;
+    function _removeFromList(address[] storage list, address _wallet) internal {
+        for (uint256 i = 0; i < list.length; i++) {
+            if (list[i] == _wallet) {
+                list[i] = list[list.length - 1];
+                list.pop();
+                break;
+            }
         }
-        if (pair.code.length == 0 || quote == address(0) || quote == address(realToken) || pair == otherPair) {
-            revert InvalidPair();
-        }
-        address a = IRealV2Pair(pair).token0();
-        address b = IRealV2Pair(pair).token1();
-        if (!((a == address(realToken) && b == quote) || (b == address(realToken) && a == quote))) {
-            revert InvalidPair();
-        }
-        IRealV2Pair(pair).totalSupply();
     }
 
-    function _lpBurned(IRealV2Pair pair) internal view returns (uint256) {
-        if (address(pair) == address(0) || lpBurnAddress == address(0)) return 0;
-        return pair.balanceOf(lpBurnAddress);
-    }
-
-    function _lpTotal(IRealV2Pair pair) internal view returns (uint256) {
-        return address(pair) == address(0) ? 0 : pair.totalSupply();
-    }
+    function _authorizeUpgrade(address newImplementation) internal override onlyDeployer {}
 }
