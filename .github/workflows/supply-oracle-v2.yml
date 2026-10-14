@@ -1,0 +1,33 @@
+name: Supply Oracle V2 tests
+on:
+  pull_request:
+    paths:
+      - 'SupplyOracleV2.sol'
+      - 'test/**'
+      - 'package.json'
+      - 'hardhat.config.js'
+      - '.github/workflows/supply-oracle-v2.yml'
+  push:
+    branches:
+      - 'codex/supply-oracle-v2'
+    paths:
+      - 'SupplyOracleV2.sol'
+      - 'test/**'
+      - 'package.json'
+      - 'hardhat.config.js'
+      - '.github/workflows/supply-oracle-v2.yml'
+jobs:
+  oracle-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned dependencies
+        run: npm install --no-audit --no-fund
+      - name: Compile and test V2 on local Cancun EVM
+        run: npm test
