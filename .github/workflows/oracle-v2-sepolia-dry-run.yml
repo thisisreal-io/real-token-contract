@@ -1,0 +1,33 @@
+name: Sepolia Supply Oracle V2 deployment dry run
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/oracle-v2-sepolia-dry-run.yml'
+      - 'scripts/deploy-supply-oracle-v2-sepolia.mjs'
+jobs:
+  deployment-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned build dependencies
+        run: npm install --no-audit --no-fund
+      - name: Compile and validate against real Sepolia contracts (no signing)
+        env:
+          DRY_RUN: '1'
+          SEPOLIA_RPC_URL: https://ethereum-sepolia-rpc.publicnode.com
+          ORACLE_OWNER: '0xbF44702EdC6A288691212C1503B07a9F860Fdbef'
+          REAL_TOKEN: '0xe6654E7dbD7CAF7b5a2eD068a3c945fD208000Fa'
+          TOTAL_ISSUED_EVER: '21000000000000000000000000'
+          VESTING_FACTORY: '0xd964e11dA64dB950EC7e97ED5363e78F2BdC345a'
+          DAO_WALLET: ''
+          LP_BURN_ADDRESS: ''
+          VOTE_EXCLUDED_WALLETS: ''
+        run: node scripts/deploy-supply-oracle-v2-sepolia.mjs
