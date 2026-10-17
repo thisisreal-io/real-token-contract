@@ -211,7 +211,7 @@ contract REALSupplyOracle is Initializable, UUPSUpgradeable, Ownable2StepUpgrade
 
     function setStakingMetricsSource(address source) external onlyOwner {
         if (source != address(0)) {
-            if (source.code.length == 0 || IStakingSupplyMetrics(source).realToken() != address(realToken)) revert InvalidAccountingSource();
+            if (source == address(this) || source.code.length == 0 || IStakingSupplyMetrics(source).realToken() != address(realToken)) revert InvalidAccountingSource();
             IStakingSupplyMetrics(source).getStakingMetrics();
         }
         stakingMetricsSource = IStakingSupplyMetrics(source);

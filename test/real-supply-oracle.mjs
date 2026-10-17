@@ -187,6 +187,7 @@ await tx(rewardSource.setReserve(ethers.parseEther('100')));
 const badRewards=await deploy('Mocks.sol','TestRewards',admin,[await addr(attacker)]);
 await reverts(upgraded.setRewardsReserve(ethers.ZeroAddress,await badRewards.getAddress()));
 assert.deepEqual([...await upgraded.getStakingMetrics()],[false,0n,0n,0n]);
+await reverts(upgraded.setStakingMetricsSource(await upgraded.getAddress()));
 const staking=await deploy('Mocks.sol','TestStaking',admin,[tokenAddress]);
 const beforeStake=await upgraded.getCirculatingSupply();
 await tx(upgraded.setStakingMetricsSource(await staking.getAddress()));
