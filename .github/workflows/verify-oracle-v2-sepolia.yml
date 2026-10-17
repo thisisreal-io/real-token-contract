@@ -1,0 +1,23 @@
+name: Read-only Sepolia Oracle V2 prerequisites
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/verify-oracle-v2-sepolia.mjs'
+      - '.github/workflows/verify-oracle-v2-sepolia.yml'
+jobs:
+  verify-sepolia:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install ethers pinned version
+        run: npm install --no-audit --no-fund
+      - name: Check Sepolia token and vesting factory (read only)
+        run: node scripts/verify-oracle-v2-sepolia.mjs
