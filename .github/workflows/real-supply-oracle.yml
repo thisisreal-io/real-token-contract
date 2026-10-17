@@ -1,0 +1,26 @@
+name: REAL Supply Oracle tests
+on:
+  pull_request:
+    paths:
+      - 'REALSupplyOracle.sol'
+      - 'test/real-supply-oracle.mjs'
+      - 'test/run-real-supply.cjs'
+      - 'scripts/prepare-real-supply-oracle.mjs'
+      - 'package.json'
+      - 'hardhat.config.js'
+      - '.github/workflows/real-supply-oracle.yml'
+  push:
+    branches: ['real-supply-oracle']
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: npm run test:real-supply

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bash test/run.sh"
+    "test": "bash test/run.sh",
+    "test:real-supply": "node test/run-real-supply.cjs"
   },
   "devDependencies": {
     "@openzeppelin/contracts": "5.1.0",
