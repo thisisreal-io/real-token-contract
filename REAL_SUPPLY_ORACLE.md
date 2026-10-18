@@ -1,6 +1,20 @@
 # REAL Supply Oracle
 
-`REALSupplyOracle.sol` is the production-named supply oracle. Deploy a **fresh implementation and fresh ERC1967Proxy**, atomically initialized in the proxy constructor. Do not use this package to upgrade either legacy oracle proxy. Earlier contracts and deployment records remain available for reference.
+`REALSupplyOracle.sol` is the production-named supply oracle. Fresh deployments use a **fresh implementation and fresh ERC1967Proxy**, atomically initialized in the proxy constructor. This revision also supports the specific REALSupplyOracle upgrade described below; it does not support upgrading the older SupplyOracleV2 or CirculatingSupplyOracle variants.
+
+## Zero-address LP reporting upgrade
+
+The previous deployment treated `lpBurnAddress == address(0)` as unset. This revision appends one private boolean after the existing storage fields. Every previous slot, offset and type is checked against the exact baseline source from commit `fe9e8b76f54579f4a23006cd18c011eefd0037c2`, retained in `test/fixtures/REALSupplyOracle.before-zero-lp.sol`.
+
+- `setLpBurnAddress(address(0))` explicitly enables counting LP tokens held at the all-zero address.
+- `isLpBurnAddressConfigured()` distinguishes this from unset; old nonzero settings keep working without migration.
+- `clearLpBurnAddress()` disables reporting and resets the address to zero.
+- Existing zero/unset configurations stay unset after a bare upgrade. Use `upgradeToAndCall(newImplementation, abi.encodeCall(setLpBurnAddress, (address(0))))` to upgrade and enable zero-address tracking atomically, signed by the existing owner. Do not call `initialize` again.
+- Configured zero-address reporting includes Uniswap V2's initial 1,000 LP base units, plus LP tokens explicitly transferred there. It reports inaccessible LP claims, not destroyed underlying REAL, and never subtracts them from REAL circulation.
+
+For the existing Sepolia proxy `0x93a83641128057ca5d713edcfe9f935a7e55f9e5`, run `RPC_URL=... node scripts/prepare-lp-zero-upgrade.mjs <proxy>` to check the baseline code and storage layout and prepare unsigned implementation data. After the owner deploys the new implementation, supply its address as the second argument to verify its runtime and prepare/estimate the unsigned owner upgrade call. The script never loads keys or sends transactions. Confirm the connected network and owner before signing.
+
+The same proxy address and all existing supply settings remain in place. The LP pair must still be configured separately on the intended chain; a mainnet pair cannot be used on Sepolia. For a fresh deployment, a zero initializer address remains unset until the owner explicitly selects it with `setLpBurnAddress(address(0))`.
 
 ## Accounting
 

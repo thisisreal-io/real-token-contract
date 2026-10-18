@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "bash test/run.sh",
-    "test:real-supply": "node test/run-real-supply.cjs"
+    "test:real-supply": "node test/run-real-supply.cjs && node test/run-real-supply.cjs test/lp-zero-upgrade.mjs"
   },
   "devDependencies": {
     "@openzeppelin/contracts": "5.1.0",
