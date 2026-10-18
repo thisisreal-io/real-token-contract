@@ -31,7 +31,7 @@ interface IRealV2Pair is IERC20 {
 
 /// @notice Read-only supply accounting for REAL. This oracle never holds tokens.
 /// @dev Deploy a NEW ERC1967Proxy, atomically initializing it with the intended owner.
-///      Fresh deployment only: this contract has a different initializer from legacy oracles. Do not upgrade existing proxies with this build.
+///      Upgrade-compatible with REALSupplyOracle from commit fe9e8b7; not with older SupplyOracle variants.
 contract REALSupplyOracle is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
     uint256 public constant MAX_SUPPLY = 100_000_000 ether;
     uint256 public constant MAX_VESTING_FACTORIES = 32;
@@ -53,6 +53,10 @@ contract REALSupplyOracle is Initializable, UUPSUpgradeable, Ownable2StepUpgrade
     address public rewardsReserveWallet;
     IRewardsReserveSupply public rewardsReserveSource;
     IStakingSupplyMetrics public stakingMetricsSource;
+    // Appended state: preserve every field used by the deployed REALSupplyOracle.
+    bool private _lpBurnAddressConfigured;
+
+    event LpBurnAddressConfigurationChanged(bool configured);
 
     error OverlappingReserve();
     error InvalidAccountingSource();
@@ -115,6 +119,7 @@ contract REALSupplyOracle is Initializable, UUPSUpgradeable, Ownable2StepUpgrade
         issuedSupplyBaseline = totalIssuedEver;
         daoWallet = initialDaoWallet;
         lpBurnAddress = initialLpBurnAddress;
+        _lpBurnAddressConfigured = initialLpBurnAddress != address(0);
         _setRewardsReserve(initialRewardsReserveWallet, initialRewardsReserveSource);
         if (firstFactory != address(0)) _addFactory(firstFactory);
         for (uint256 i; i < initialVoteExcludedWallets.length; ++i) {
@@ -225,10 +230,24 @@ contract REALSupplyOracle is Initializable, UUPSUpgradeable, Ownable2StepUpgrade
     }
 
     function setLpBurnAddress(address burnAddress) external onlyOwner {
-        if (burnAddress == address(0)) revert InvalidAddress();
         address old = lpBurnAddress;
         lpBurnAddress = burnAddress;
+        _lpBurnAddressConfigured = true;
         emit LpBurnAddressUpdated(old, burnAddress);
+        emit LpBurnAddressConfigurationChanged(true);
+    }
+
+    /// @notice Legacy nonzero burn addresses remain configured after upgrade.
+    function isLpBurnAddressConfigured() public view returns (bool) {
+        return _lpBurnAddressConfigured || lpBurnAddress != address(0);
+    }
+
+    function clearLpBurnAddress() external onlyOwner {
+        address old = lpBurnAddress;
+        lpBurnAddress = address(0);
+        _lpBurnAddressConfigured = false;
+        emit LpBurnAddressUpdated(old, address(0));
+        emit LpBurnAddressConfigurationChanged(false);
     }
 
     /// @dev For Uniswap V2-style ERC-20 LP tokens. The pair must contain REAL and the stated quote token.
@@ -354,7 +373,7 @@ contract REALSupplyOracle is Initializable, UUPSUpgradeable, Ownable2StepUpgrade
     }
 
     function _lpBurned(IRealV2Pair pair) internal view returns (uint256) {
-        if (address(pair) == address(0) || lpBurnAddress == address(0)) return 0;
+        if (address(pair) == address(0) || !isLpBurnAddressConfigured()) return 0;
         return pair.balanceOf(lpBurnAddress);
     }
 

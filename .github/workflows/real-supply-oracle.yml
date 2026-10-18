@@ -4,8 +4,11 @@ on:
     paths:
       - 'REALSupplyOracle.sol'
       - 'test/real-supply-oracle.mjs'
+      - 'test/lp-zero-upgrade.mjs'
+      - 'test/fixtures/**'
       - 'test/run-real-supply.cjs'
       - 'scripts/prepare-real-supply-oracle.mjs'
+      - 'scripts/prepare-lp-zero-upgrade.mjs'
       - 'package.json'
       - 'hardhat.config.js'
       - '.github/workflows/real-supply-oracle.yml'

@@ -25,7 +25,7 @@ chain.stdout.on('data', data => {
   if (test || finished) return;
   startup += data.toString();
   if (!startup.includes('Started HTTP')) return;
-  test = spawn(process.execPath, ['test/real-supply-oracle.mjs'], {
+  test = spawn(process.execPath, [process.argv[2] || 'test/real-supply-oracle.mjs'], {
     cwd:root, windowsHide:true, stdio:'inherit',
     env:{...process.env, REAL_ORACLE_TEST_RPC:`http://127.0.0.1:${port}`},
   });
