@@ -1,0 +1,32 @@
+name: Submit Fee V2 checks
+on:
+  pull_request:
+    paths:
+      - 'SubmitFeeV2.sol'
+      - 'test/submit-fee-v2.mjs'
+      - 'test/run-submit-fee-v2.sh'
+      - '.github/workflows/submit-fee-v2.yml'
+      - 'package.json'
+      - 'hardhat.config.js'
+  push:
+    branches: [main]
+    paths:
+      - 'SubmitFeeV2.sol'
+      - 'test/submit-fee-v2.mjs'
+      - 'test/run-submit-fee-v2.sh'
+      - '.github/workflows/submit-fee-v2.yml'
+      - 'package.json'
+      - 'hardhat.config.js'
+permissions:
+  contents: read
+jobs:
+  local-contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm run test:submit-fee-v2
