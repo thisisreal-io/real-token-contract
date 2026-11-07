@@ -1,0 +1,176 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import solc from 'solc';
+import {ethers} from 'ethers';
+
+const root=path.resolve(import.meta.dirname,'..');
+const source=fs.readFileSync(path.join(root,'GOV MINT v2.sol'),'utf8');
+const mocks=`// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+contract GovTestToken is ERC20 {
+ constructor() ERC20("Test REAL","REAL") {_mint(msg.sender,100_000_000 ether);}
+}
+contract GovTestOracle {
+ uint256 public supply=1_000_000 ether;
+ mapping(address=>bool) public excluded;
+ function setSupply(uint256 value) external {supply=value;}
+ function setExcluded(address wallet,bool value) external {excluded[wallet]=value;}
+ function getCirculatingSupply() external view returns(uint256) {return supply;}
+ function isVotingExcluded(address wallet) external view returns(bool) {return excluded[wallet];}
+}`;
+function readImport(name) {
+ return fs.readFileSync(path.join(root,'node_modules',name.replace(/@5\.1\.0\//g,'/')),'utf8');
+}
+const input={language:'Solidity',sources:{'GOV MINT v2.sol':{content:source},'GovMocks.sol':{content:mocks},'@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol':{content:readImport('@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol')}},settings:{optimizer:{enabled:true,runs:200},evmVersion:'cancun',outputSelection:{'*':{'*':['abi','evm.bytecode.object','evm.deployedBytecode.object']}}}};
+const compiled=JSON.parse(solc.compile(JSON.stringify(input),{import:name=>{try{return {contents:readImport(name)}}catch(e){return {error:e.message}}}}));
+assert.deepEqual((compiled.errors||[]).filter(x=>x.severity==='error'),[]);
+for(const warning of compiled.errors||[]) console.error(warning.formattedMessage);
+const artifact=(file,name)=>compiled.contracts[file][name];
+const byteSize=artifact('GOV MINT v2.sol','GOVMINTv2').evm.deployedBytecode.object.length/2;
+assert(byteSize<24576,'implementation must fit EIP-170');
+console.log(`Compiled Solidity 0.8.28 / OpenZeppelin 5.1.0; runtime ${byteSize} bytes`);
+const provider=new ethers.JsonRpcProvider(process.env.GOV_MINT_TEST_RPC||'http://127.0.0.1:18549',undefined,{cacheTimeout:-1});
+assert.equal((await provider.getNetwork()).chainId,31337n,'local chain only');
+const accounts=await Promise.all(Array.from({length:20},(_,i)=>provider.getSigner(i)));
+const addresses=await Promise.all(accounts.map(x=>x.getAddress()));
+let checks=0;
+function ok(name){checks++;console.log(`PASS ${checks}: ${name}`)}
+async function deploy(file,name,args=[]) {const a=artifact(file,name);const c=await new ethers.ContractFactory(a.abi,a.evm.bytecode.object,accounts[0]).deploy(...args);await c.waitForDeployment();return c;}
+async function tx(p){await (await p).wait();}
+async function reverts(p){await assert.rejects(async()=>{const r=await p;if(r?.wait)await r.wait()});}
+const day=86400;
+async function now(){return Number((await provider.send('eth_getBlockByNumber',['latest',false])).timestamp);}
+async function at(time){await provider.send('evm_setNextBlockTimestamp',[time]);await provider.send('evm_mine',[]);}
+const token=await deploy('GovMocks.sol','GovTestToken');
+const oracle=await deploy('GovMocks.sol','GovTestOracle');
+const implementation=await deploy('GOV MINT v2.sol','GOVMINTv2');
+const abi=artifact('GOV MINT v2.sol','GOVMINTv2').abi;
+const iface=new ethers.Interface(abi);
+async function makeDao(signers=addresses.slice(0,5),tokenAddress=null,oracleAddress=null) {
+ tokenAddress ??= await token.getAddress(); oracleAddress ??= await oracle.getAddress();
+ const data=iface.encodeFunctionData('initialize',[tokenAddress,oracleAddress,signers]);
+ const proxy=await deploy('@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol','ERC1967Proxy',[await implementation.getAddress(),data]);
+ const dao=new ethers.Contract(await proxy.getAddress(),abi,accounts[0]);
+ await tx(token.transfer(await dao.getAddress(),ethers.parseEther('4000000')));
+ return dao;
+}
+await reverts(makeDao([addresses[0],addresses[0],...addresses.slice(2,5)]));
+await reverts(makeDao([ethers.ZeroAddress,...addresses.slice(1,5)]));
+await reverts(makeDao(addresses.slice(0,5),addresses[0]));
+await reverts(makeDao(addresses.slice(0,5),await token.getAddress(),addresses[0]));
+ok('initialization rejects zero/duplicate signers and non-contract token/oracle addresses');
+const dao=await makeDao();
+await reverts(dao.initialize(await token.getAddress(),await oracle.getAddress(),addresses.slice(0,5)));
+await reverts(implementation.initialize(await token.getAddress(),await oracle.getAddress(),addresses.slice(0,5)));
+assert(!abi.some(x=>x.name==='upgradeToAndCall'));
+await reverts(accounts[0].sendTransaction({to:await dao.getAddress(),data:new ethers.Interface(['function upgradeToAndCall(address,bytes)']).encodeFunctionData('upgradeToAndCall',[await implementation.getAddress(),'0x'])}));
+assert(!abi.some(x=>x.name==='updateAuthorizedWallet'||x.name==='updateSupplyOracle'));
+ok('reinitialization, implementation initialization and deployer upgrade are blocked; unilateral setters absent');
+
+// Independent sorted-pair tree builder; deliberately uses the original leaf format.
+const voters=addresses.slice(5,15);
+const leaves=voters.map(a=>ethers.solidityPackedKeccak256(['address','uint256'],[a,20]));
+const levels=[leaves];
+while(levels.at(-1).length>1){const old=levels.at(-1),next=[];for(let i=0;i<old.length;i+=2){if(i+1===old.length)next.push(old[i]);else next.push(ethers.keccak256(ethers.concat([old[i],old[i+1]].sort())))}levels.push(next);}
+const merkleRoot=levels.at(-1)[0];
+function proof(index){const result=[];for(let l=0;l<levels.length-1;l++){const neighbor=index^1;if(neighbor<levels[l].length)result.push(levels[l][neighbor]);index=Math.floor(index/2)}return result;}
+async function propose(contract=dao,amount=ethers.parseEther('1000000'),rootHash=merkleRoot) {
+ const id=Number(await contract.proposalCount()),start=(await now())+day,end=start+day;
+ await tx(contract.createProposal(addresses[19],amount,rootHash,start,end));
+ return {id,start,end};
+}
+const first=await propose(),second=await propose();
+await reverts(dao.connect(accounts[5]).approveProposal(first.id));
+await reverts(dao.approveProposal(first.id));
+await tx(dao.connect(accounts[1]).approveProposal(first.id));
+assert.equal(await dao.proposalApprovalCount(first.id),2n);
+const snapshot=await provider.send('evm_snapshot',[]);
+await at(first.start);
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(0)));
+await reverts(dao.connect(accounts[2]).approveProposal(first.id));
+await provider.send('evm_revert',[snapshot]);
+ok('creator counts once, outsiders/duplicates rejected; two approvals cannot open voting and late approvals fail');
+for(const p of [first,second]){
+ if(p===second)await tx(dao.connect(accounts[1]).approveProposal(p.id));
+ await tx(dao.connect(accounts[2]).approveProposal(p.id));
+}
+await at(Math.max(first.start,second.start));
+await reverts(dao.castVote(first.id,true,20,[]));
+await reverts(dao.connect(accounts[5]).castVote(999,true,20,proof(0)));
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,21,proof(0)));
+await tx(oracle.setExcluded(addresses[5],true));
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(0)));
+await tx(oracle.setExcluded(addresses[5],false));
+for(const p of [first,second])for(let i=0;i<10;i++)await tx(dao.connect(accounts[i+5]).castVote(p.id,true,20,proof(i)));
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(0)));
+ok('three approvals open voting; signer, invalid proposal/proof, excluded wallet and duplicate votes rejected');
+await reverts(dao.executeProposal(first.id));
+await at(Math.max(first.end,second.end)+30*day);
+const oldBalance=await token.balanceOf(addresses[19]);
+await tx(dao.connect(accounts[18]).executeProposal(first.id));
+assert.equal((await token.balanceOf(addresses[19]))-oldBalance,ethers.parseEther('1000000'));
+const releaseTime=Number(await dao.lastApprovalTimestamp());
+assert(releaseTime>first.end);
+assert.equal(await dao.totalReleased(),ethers.parseEther('1000000'));
+await reverts(dao.executeProposal(second.id));
+await at(releaseTime+90*day-1);
+await reverts(dao.executeProposal.staticCall(second.id));
+await at(releaseTime+90*day);
+await tx(dao.executeProposal(second.id));
+await reverts(dao.executeProposal(first.id));
+ok('timelock, permissionless execution, exact amount, replay protection and 90 days between actual transfers');
+
+// Recovery tests on a separate instance, with an active old-epoch proposal.
+const recovery=await makeDao();
+const pending=await propose(recovery);
+await tx(recovery.connect(accounts[1]).approveProposal(pending.id));
+await tx(recovery.connect(accounts[2]).approveProposal(pending.id));
+const nonce=ethers.id('pause-before-rotation');
+await tx(recovery.signPauseSystem(nonce));
+await reverts(recovery.requestWalletReplacement(5,addresses[15]));
+await reverts(recovery.requestWalletReplacement(4,ethers.ZeroAddress));
+await reverts(recovery.requestWalletReplacement(4,addresses[3]));
+await tx(recovery.requestWalletReplacement(4,addresses[15]));
+await reverts(recovery.approveWalletReplacement(0));
+await reverts(recovery.connect(accounts[15]).approveWalletReplacement(0));
+await tx(recovery.connect(accounts[1]).approveWalletReplacement(0));
+assert.equal(await recovery.authorizedWallets(4),addresses[4]);
+await tx(recovery.connect(accounts[2]).approveWalletReplacement(0));
+assert.equal(await recovery.authorizedWallets(4),addresses[15]);
+assert.equal(await recovery.signerEpoch(),1n);
+await reverts(recovery.connect(accounts[4]).requestWalletReplacement(0,addresses[16]));
+await reverts(recovery.connect(accounts[1]).approveWalletReplacement(0));
+await reverts(recovery.approveProposal(pending.id));
+await reverts(recovery.executeProposal(pending.id));
+ok('request plus two current approvals atomically replaces one wallet; nominee, removed signer, duplicates and stale requests blocked');
+await tx(recovery.connect(accounts[1]).signPauseSystem(nonce));
+await tx(recovery.connect(accounts[2]).signPauseSystem(nonce));
+assert.equal(await recovery.systemPaused(),false);
+await tx(recovery.connect(accounts[15]).signPauseSystem(nonce));
+assert.equal(await recovery.systemPaused(),true);
+ok('pre-rotation emergency signatures cannot combine with the new signer group');
+await tx(recovery.requestWalletReplacement(3,addresses[16]));
+await tx(recovery.connect(accounts[1]).approveWalletReplacement(1));
+await tx(recovery.connect(accounts[2]).approveWalletReplacement(1));
+assert.equal(await recovery.authorizedWallets(3),addresses[16]);
+assert.equal(await recovery.systemPaused(),true);
+await reverts(recovery.connect(accounts[3]).signUnpauseSystem(ethers.id('unpause')));
+for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signUnpauseSystem(ethers.id('unpause')));
+assert.equal(await recovery.systemPaused(),false);
+ok('wallet recovery works during emergency pause; only the current group can unpause');
+
+await tx(oracle.setSupply(0));
+await reverts(propose(recovery));
+await tx(oracle.setSupply(ethers.parseEther('100000001')));
+await reverts(propose(recovery));
+await tx(oracle.setSupply(ethers.parseEther('1000')));
+const tiny=await propose(recovery);
+await tx(recovery.connect(accounts[1]).approveProposal(tiny.id));
+await tx(recovery.connect(accounts[2]).approveProposal(tiny.id));
+await at(tiny.start);
+await reverts(recovery.connect(accounts[5]).castVote(tiny.id,true,20,proof(0)));
+ok('zero/oversized supply snapshots and zero-effective-power votes rejected');
+console.log(`${checks} integration groups passed. DRAFT: Merkle ownership is NOT verified by these contracts; no live RPC or deployment used.`);
+await provider.destroy();
