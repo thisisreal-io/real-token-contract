@@ -32,8 +32,8 @@ The v2 draft uses a fixed ERC1967 proxy with **no contract-exposed upgrade path*
 **The contract is not finished and passing local tests is not production acceptance.**
 
 1. **Voting eligibility is unresolved.** The original Merkle method remains. Three signers approve the root, but proofs still demonstrate membership in an approved tree, not historical token ownership, continuous holding, completeness, beneficial ownership or vesting exclusion. No claim of fully on-chain balance verification is made. Decide the balance-verification architecture before building the final vote path and proof-generation/distribution system. Existing REAL has no assumed historical balance checkpoint interface. Current-balance checks alone would not prevent token reuse between wallets. Do not mistake adding three signatures for solving this problem.
-2. **Inherited numbers are test settings, not approved policy:** 15% quorum, 51% approval, 10 voter addresses, 5% cap per address, maximum 30-day voting period. Define production quorum/approval/minimum participants, minimum voting duration/notice, threshold rounding and whether the cap is wanted. Addresses do not prove unique people. No new arbitrary production thresholds are selected here.
-3. **Snapshot consistency and exclusion authority:** circulating supply is still captured at proposal creation, with no recorded balance snapshot block for the Merkle tree. Corporate exclusions still consult the external oracle dynamically. Freeze/verify the required eligibility and supply context together and decide how external oracle upgrades and exclusion changes affect an ongoing vote. Removed signers must remain excluded if still organization-controlled; this requires a complete organization-wallet policy, not merely the current five-signer list.
+2. **Inherited numbers are test settings, not approved policy:** 15% quorum, 51% approval, 10 voter addresses, 5% cap per address, maximum 30-day voting period. Define production quorum/approval/minimum participants, minimum voting duration/notice, whether the cap is wanted. Addresses do not prove unique people. No new arbitrary production thresholds are selected here.
+3. **Snapshot consistency and exclusion authority:** circulating supply is still captured at proposal creation, with no recorded balance snapshot block for the Merkle tree. Corporate exclusions still consult the external oracle dynamically. Freeze/verify the required eligibility and supply context together and decide how external oracle upgrades and exclusion changes affect an ongoing vote. All current and former v2 corporate signers are now permanently excluded locally, independently of the external oracle. Other organization-controlled wallets and vesting contracts still require complete verified exclusion coverage.
 4. **Pause clock and proposal lifecycle:** original pause controls block votes without extending deadlines. Define restart/extension/cancellation behavior; pending emergency approvals currently have no expiry/revocation beyond signer rotation. Decide proposal expiry, stale snapshots and cancellation/recovery safeguards.
 5. **Initial reserve restriction:** earlier discussion mentioned a five-year initial no-release period, but the maintained reference does not establish its exact current authority or start date. This draft does not silently invent that timestamp.
 6. **Deployment/custody:** no mainnet DAO deployment, reserve transfer, Safe modification or oracle configuration change is included. Verify actual chain state, funding, approved five-wallet identities, exclusion coverage and custody migration. The October 18 oracle record describes reserve custody in a Safe; supply reporting is not DAO release enforcement.
@@ -48,7 +48,7 @@ npm install
 node test/run-gov-mint-v2.cjs
 ```
 
-The runner starts an isolated localhost Hardhat chain, compiles v2 and test mocks, runs `test/gov-mint-v2.mjs`, and shuts down the child chain. It uses no live-chain RPC, real keys, Safe transaction or deployment. Nine integration groups cover initialization, absence of unilateral controls/upgrades, internal proposal approvals, proof/duplicate/exclusion checks, timelock and actual-transfer cooldown, replacement authority, stale signatures, recovery while paused, and invalid supply/zero effective voting power. **Mock voting trees intentionally do not prove real token holdings; this suite does not resolve the eligibility gap.**
+The runner starts an isolated localhost Hardhat chain, compiles v2 and test mocks, runs `test/gov-mint-v2.mjs`, and shuts down the child chain. It uses no live-chain RPC, real keys, Safe transaction or deployment. Twelve integration groups cover initialization, absence of unilateral controls/upgrades, internal proposal approvals, proof/duplicate/exclusion checks, timelock and actual-transfer cooldown, replacement authority, stale signatures, recovery while paused, and invalid supply/zero effective voting power. **Mock voting trees intentionally do not prove real token holdings; this suite does not resolve the eligibility gap.**
 
 ## Sources for review
 
@@ -58,3 +58,30 @@ The runner starts an isolated localhost Hardhat chain, compiles v2 and test mock
 - October 18 Supply Oracle deployment reference: https://drive.google.com/file/d/14bcO8IcD94Vd9OrDRQjQTeQF5JLydPOT/view
 
 No merge, deployment, live wallet action or developer message is part of this draft.
+
+
+## Second development pass
+
+- Quorum is rounded upward consistently in execution, proposal status and threshold reads. A fractional participation requirement cannot pass with fewer whole votes than required.
+- Emergency approvals bind both the signer epoch and the relevant pause-state revision. Partial signatures cannot survive a pause/unpause cycle. Opposite-state preapprovals are rejected.
+- Former corporate signers remain excluded from public voting, even when the external oracle omits them and their Merkle proof is valid.
+- Paused state is visible in proposal status. Obsolete/cancelled/executed proposals cannot collect emergency pause approvals. This does not yet change wall-clock deadlines; extension/restart policy remains undecided.
+- Execution countdown includes the global release cooldown as well as the proposal timelock. It is a time-only view, not a guarantee the proposal satisfies all execution conditions.
+- Counted votes cannot exceed the circulating snapshot's whole-token vote capacity. This is a sanity bound, not proof that individual voting balances are genuine.
+- Local compile succeeded without warnings; optimized runtime 16,729 bytes. Twelve EVM integration groups passed, including the new pause-cycle replay, fractional quorum, paused-status, retired-corporate-voter and cooldown-countdown regressions.
+
+## Owner direction: noncustodial voting and holding period
+
+Rick selected **keep tokens in members' wallets**. Do not add a voting-token deposit, escrow or lock requirement.
+
+Rick clarified that eligibility must include a prior holding period to prevent token movement being used for repeat voting. **30 days was given as an example, not a final approved duration.** A balance at a single snapshot does not prove continuous holding during a prior interval. A pair of endpoint balances does not prove it either: tokens could leave and return between the endpoints.
+
+Proposed interpretation for confirmation: weight only the minimum eligible balance continuously maintained throughout the holding interval ending at the proposal's fixed snapshot. New top-ups do not immediately add voting power; withdrawals reduce the continuously maintained eligible amount. This interpretation applies to fungible balance amounts rather than tracking named token units. No code currently enforces this requirement. Decide whether this interpretation and duration are approved before implementation.
+
+For the final proof design, bind every vote to the same canonical snapshot, chain, REAL token, token storage layout and eligibility/exclusion policy. Historical storage proofs can authenticate account/storage values against an Ethereum state root, but an endpoint proof alone cannot establish a holding history. A complete transfer-history/receipt proof or another cryptographically verified history construction is still needed for continuous holding. Do not present a corporation-approved Merkle list as equivalent verification. No unverified token storage slot or live-chain state is assumed.
+
+Primary technical references for the proposed proof design:
+- https://eips.ethereum.org/EIPS/eip-1186 — account/storage proofs authenticated by the block state root.
+- https://docs.soliditylang.org/en/latest/units-and-global-variables.html — native blockhash is limited to the most recent 256 blocks; authenticating an older lookback requires an additional verified history mechanism.
+
+This owner direction is recorded for ongoing design. The eligibility implementation remains incomplete; this PR remains a development draft.
