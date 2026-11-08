@@ -78,7 +78,7 @@ const merkleRoot=levels.at(-1)[0];
 function proof(index){const result=[];for(let l=0;l<levels.length-1;l++){const neighbor=index^1;if(neighbor<levels[l].length)result.push(levels[l][neighbor]);index=Math.floor(index/2)}return result;}
 async function propose(contract=dao,amount=ethers.parseEther('1000000'),rootHash=merkleRoot) {
  const id=Number(await contract.proposalCount()),start=(await now())+day,end=start+day;
- await tx(contract.createProposal(addresses[19],amount,rootHash,start,end));
+ await tx(contract.createProposal(addresses[19],amount,rootHash));
  return {id,start,end};
 }
 const first=await propose(),second=await propose();
@@ -89,14 +89,21 @@ assert.equal(await dao.proposalApprovalCount(first.id),2n);
 const snapshot=await provider.send('evm_snapshot',[]);
 await at(first.start);
 await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(0)));
-await reverts(dao.connect(accounts[2]).approveProposal(first.id));
+assert.equal(await dao.getProposalStatus(first.id),2n);
 await provider.send('evm_revert',[snapshot]);
-ok('creator counts once, outsiders/duplicates rejected; two approvals cannot open voting and late approvals fail');
+ok('creator counts once, outsiders/duplicates rejected; two approvals never open voting');
 for(const p of [first,second]){
  if(p===second)await tx(dao.connect(accounts[1]).approveProposal(p.id));
  await tx(dao.connect(accounts[2]).approveProposal(p.id));
+ assert.equal((await dao.getProposalDetails(p.id)).votingStart,BigInt(await now()),"vote starts at third approval timestamp");
 }
-await at(Math.max(first.start,second.start));
+for (const p of [first,second]) {
+ const details=await dao.getProposalDetails(p.id);
+ assert.equal(details.votingEnd-details.votingStart,30n*BigInt(day));
+ p.start=Number(details.votingStart); p.end=Number(details.votingEnd);
+}
+assert.equal(await dao.HOLDING_PERIOD(),30n*BigInt(day));
+await reverts(dao.connect(accounts[3]).approveProposal(first.id));
 await reverts(dao.castVote(first.id,true,20,[]));
 await reverts(dao.connect(accounts[5]).castVote(999,true,20,proof(0)));
 await reverts(dao.connect(accounts[5]).castVote(first.id,true,21,proof(0)));
@@ -184,7 +191,7 @@ for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signPauseProposal(rou
 assert.equal(await recovery.getProposalStatus(rounded.id),7n,'paused state exposed');
 await reverts(recovery.signPauseProposal(pending.id,ethers.id('obsolete-proposal')));
 for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signUnpauseProposal(rounded.id,ethers.id('proposal-unpause')));
-assert.equal(await recovery.getProposalStatus(rounded.id),0n);
+assert.equal(await recovery.getProposalStatus(rounded.id),1n);
 ok('quorum rounds upward consistently; paused proposal status is visible and obsolete proposals cannot be paused');
 
 const retiredLeaf=ethers.solidityPackedKeccak256(['address','uint256'],[addresses[4],20]);
