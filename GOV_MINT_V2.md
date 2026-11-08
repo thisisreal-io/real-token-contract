@@ -85,3 +85,10 @@ Primary technical references for the proposed proof design:
 - https://docs.soliditylang.org/en/latest/units-and-global-variables.html — native blockhash is limited to the most recent 256 blocks; authenticating an older lookback requires an additional verified history mechanism.
 
 This owner direction is recorded for ongoing design. The eligibility implementation remains incomplete; this PR remains a development draft.
+
+
+## Confirmed timing decisions
+
+Rick confirmed a 30-day prior holding requirement and exactly 30 days of public voting. The third current authorized-wallet approval now sets votingStart to its transaction timestamp and votingEnd to that timestamp plus 30 days. createProposal no longer accepts caller-chosen start/end times. The third approval emits VotingOpened. Unapproved proposals do not have an execution countdown. The 30-day withdrawal delay follows the public voting end, and 90-day spacing remains based on actual releases.
+
+HOLDING_PERIOD records the approved 30-day requirement but does not itself enforce balance history. Noncustodial historical eligibility verification and the canonical snapshot at opening remain unfinished; the inherited tree/supply snapshot at creation must be replaced in that work. Do not describe the holding rule as implemented merely because a constant exists. Prior documentation about preselected starts/approval deadlines is superseded by this timing decision.
