@@ -34,11 +34,11 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     uint256 public constant VOTING_PERIOD = 30 days;
     uint256 public constant HOLDING_PERIOD = 30 days; // Eligibility verification still pending.
     uint256 public constant TOKENS_PER_VOTE = 1_000 * 1e18;
-    uint256 public constant QUORUM_BPS = 1500; // 15%
+    uint256 public constant QUORUM_BPS = 200; // 2% of eligible wallet addresses; no token-weight quorum
     uint256 public constant APPROVAL_BPS = 5100; // 51%
     uint256 public constant REQUIRED_SIGNATURES = 3;
     uint256 public constant TOTAL_SIGNERS = 5;
-    uint256 public constant MIN_VOTERS = 10; // Inherited test value: 10 distinct addresses. Production minimum requires approval.
+    uint256 public constant MIN_VOTERS = 1; // No extra production floor: ceil(2% of eligible wallets). Sepolia overrides to five.
     uint256 public constant MAX_VOTE_POWER_BPS = 500; // Inherited draft: 5% max voting power per address (relative to circulating supply in vote units)
 
     // ─────────────────────────────────────────────────────────────────────
@@ -49,6 +49,20 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     IGovMintSupplyOracleV2 public supplyOracle;
     address public deployer;
     address[5] public authorizedWallets;
+
+    // Immutable per-proposal, signer-attested snapshot manifest. Proofs authenticate
+    // inclusion, not the completeness/correctness of the RPC history used to build it.
+    struct Electorate {
+        uint256 walletCount;
+        uint256 totalVotingPower;
+        uint256 circulatingSupply;
+        uint256 snapshotBlock;
+        bytes32 snapshotHash;
+        bytes32 manifestHash;
+    }
+    mapping(uint256 => Electorate) public electorates;
+    event ElectorateCommitted(uint256 indexed id, uint256 walletCount, uint256 totalVotingPower,
+        uint256 snapshotBlock, bytes32 snapshotHash, bytes32 manifestHash);
 
     // Every wallet replacement invalidates proposals and approvals from older groups.
     // Historical corporate signer wallets never acquire public voting power on removal.
@@ -86,6 +100,11 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
     // System-wide pause (requires 3-of-5)
     bool public systemPaused;
+    uint256 public systemPauseStartedAt;
+    uint256 public systemPausedSeconds;
+    mapping(uint256=>uint256) public proposalPauseStartedClock;
+    mapping(uint256=>uint256) public proposalPausedSeconds;
+    mapping(uint256=>uint256) public proposalGlobalPauseBaseline;
 
     // Multisig action tracking for pause/unpause
     mapping(bytes32 => mapping(address => bool)) public actionSignatures;
@@ -107,7 +126,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         Failed,     // Quorum or approval not met
         Executed,   // Tokens released
         Cancelled,   // Cancelled by proposer or obsolete signer group
-        Paused       // System or proposal paused; deadlines still use wall-clock time
+        Paused       // System or proposal paused; remaining voting time is frozen
     }
 
     struct Proposal {
@@ -212,7 +231,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
      * @notice Create a new governance proposal to release tokens from the DAO vault.
      * @param _recipient Wallet that receives tokens if proposal passes
      * @param _amount Amount of REAL tokens requested (max 1,000,000)
-     * @param _merkleRoot Merkle root of eligible voters (address, votingPower) pairs.
+     * @param _merkleRoot Root of domain-separated eligible-wallet voting-power leaves.
      *        DRAFT: computed off-chain. Membership is not proof of token ownership.
      *        Final snapshot, holding-period and vesting-exclusion mechanics are unresolved.
      *        Corporate signers are excluded locally; other exclusions depend on the oracle.
@@ -220,16 +239,28 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     function createProposal(
         address _recipient,
         uint256 _amount,
-        bytes32 _merkleRoot
+        bytes32 _merkleRoot,
+        Electorate calldata electorate
     ) external onlyAuthorized whenSystemNotPaused returns (uint256) {
         require(_recipient != address(0), "DAO: invalid recipient");
         require(_amount > 0 && _amount <= MAX_UNLOCK_PER_PROPOSAL, "DAO: amount exceeds max 1M");
         require(_amount <= realToken.balanceOf(address(this)), "DAO: insufficient vault balance");
         require(_merkleRoot != bytes32(0), "DAO: invalid merkle root");
+        require(electorate.walletCount >= _minimumVoters(), "DAO: insufficient eligible wallets");
+        require(electorate.totalVotingPower >= electorate.walletCount, "DAO: invalid eligible voting power");
+        require(electorate.totalVotingPower <= realToken.totalSupply() / TOKENS_PER_VOTE, "DAO: excessive eligible voting power");
+        require(electorate.snapshotBlock < block.number && blockhash(electorate.snapshotBlock) != bytes32(0), "DAO: snapshot not recent");
+        require(blockhash(electorate.snapshotBlock) == electorate.snapshotHash, "DAO: snapshot hash mismatch");
+        require(electorate.manifestHash != bytes32(0), "DAO: missing manifest hash");
         uint256 proposalId = proposalCount++;
-        uint256 circulatingSnapshot = supplyOracle.getCirculatingSupply();
+        electorates[proposalId] = electorate;
+        emit ElectorateCommitted(proposalId, electorate.walletCount, electorate.totalVotingPower,
+            electorate.snapshotBlock, electorate.snapshotHash, electorate.manifestHash);
+        uint256 circulatingSnapshot = electorate.circulatingSupply;
+        require(supplyOracle.getCirculatingSupply() <= realToken.totalSupply(), "DAO: oracle accounting invalid");
         require(circulatingSnapshot >= TOKENS_PER_VOTE, "DAO: invalid supply snapshot");
         require(circulatingSnapshot <= realToken.totalSupply(), "DAO: supply exceeds token total");
+        require(electorate.totalVotingPower <= circulatingSnapshot / TOKENS_PER_VOTE, "DAO: eligible votes exceed circulation");
         require(_amount <= MAX_TOTAL_RELEASE - totalReleased, "DAO: reserve limit");
         proposalEpoch[proposalId] = signerEpoch;
         proposalApprovedBy[proposalId][msg.sender] = true;
@@ -273,11 +304,18 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         require(!proposal.cancelled, "DAO: proposal cancelled");
         require(proposalApprovalCount[id] < REQUIRED_SIGNATURES, "DAO: internal approval complete");
         require(!proposalApprovedBy[id][msg.sender], "DAO: duplicate approval");
+        // Every approval must refer to a still-canonical recent snapshot.
+        // If approval is delayed beyond blockhash availability, regenerate and resubmit.
+        Electorate storage electorate = electorates[id];
+        require(blockhash(electorate.snapshotBlock) == electorate.snapshotHash, "DAO: stale snapshot; resubmit");
         proposalApprovedBy[id][msg.sender] = true;
         emit ProposalApproved(id, msg.sender, ++proposalApprovalCount[id]);
         if (proposalApprovalCount[id] == REQUIRED_SIGNATURES) {
+            proposalGlobalPauseBaseline[id] = _systemPausedTotal();
+            proposalPausedSeconds[id] = 0;
+            if (proposalPaused[id]) proposalPauseStartedClock[id] = _systemClock();
             proposal.votingStart = block.timestamp;
-            proposal.votingEnd = block.timestamp + VOTING_PERIOD;
+            proposal.votingEnd = block.timestamp + _votingPeriod();
             emit VotingOpened(id, proposal.votingStart, proposal.votingEnd);
         }
     }
@@ -304,12 +342,13 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         require(proposalApprovalCount[_proposalId] >= REQUIRED_SIGNATURES, "DAO: internal approval missing");
         require(!corporateWallet[msg.sender], "DAO: corporate wallet cannot vote");
         require(msg.sender != address(this), "DAO: vault cannot vote");
+        require(msg.sender.code.length == 0, "DAO: contract wallets excluded by current policy");
         Proposal storage proposal = proposals[_proposalId];
 
         require(!proposal.cancelled, "DAO: proposal cancelled");
         require(!proposalPaused[_proposalId], "DAO: proposal is paused");
         require(block.timestamp >= proposal.votingStart, "DAO: voting not started");
-        require(block.timestamp <= proposal.votingEnd, "DAO: voting ended");
+        require(block.timestamp <= _effectiveVotingEnd(_proposalId), "DAO: voting ended");
         require(!hasVoted[_proposalId][msg.sender], "DAO: already voted");
         require(_votingPower > 0, "DAO: zero voting power");
 
@@ -317,22 +356,23 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         // wallet are barred from voting, even if a faulty Merkle root were to include them.
         require(!supplyOracle.isVotingExcluded(msg.sender), "DAO: wallet excluded from voting");
 
-        // Verify Merkle proof: leaf = keccak256(abi.encodePacked(voter, votingPower))
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _votingPower));
+        // Domain-separated proof: chain, DAO, token and canonical snapshot cannot be substituted.
+        bytes32 leaf = keccak256(abi.encode(block.chainid, address(this), address(realToken),
+            electorates[_proposalId].snapshotBlock, electorates[_proposalId].snapshotHash,
+            msg.sender, _votingPower));
         require(
             MerkleProof.verify(_merkleProof, proposal.merkleRoot, leaf),
             "DAO: invalid merkle proof"
         );
 
-        // Cap voting power at 5% of circulating supply (in vote units)
-        uint256 maxPower = (proposal.circulatingSupplySnapshot * MAX_VOTE_POWER_BPS) /
-            (10000 * TOKENS_PER_VOTE);
+        // Cap against fixed eligible voting power; independent of voting order.
+        uint256 maxPower = (electorates[_proposalId].totalVotingPower * MAX_VOTE_POWER_BPS) / 10000;
         uint256 effectivePower = _votingPower > maxPower ? maxPower : _votingPower;
 
         require(effectivePower > 0, "DAO: zero effective voting power");
         hasVoted[_proposalId][msg.sender] = true;
         proposal.voterCount++;
-        require(proposal.yesVotes + proposal.noVotes + effectivePower <= proposal.circulatingSupplySnapshot / TOKENS_PER_VOTE,
+        require(proposal.yesVotes + proposal.noVotes + effectivePower <= electorates[_proposalId].totalVotingPower,
             "DAO: votes exceed circulating snapshot");
 
         if (_support) {
@@ -355,21 +395,21 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     function executeProposal(uint256 _proposalId) external whenSystemNotPaused nonReentrant {
         _requireCurrentProposal(_proposalId);
         require(proposalApprovalCount[_proposalId] >= REQUIRED_SIGNATURES, "DAO: internal approval missing");
-        require(lastApprovalTimestamp == 0 || block.timestamp >= lastApprovalTimestamp + COOLDOWN_DURATION, "DAO: 90-day release cooldown");
+        require(lastApprovalTimestamp == 0 || block.timestamp >= lastApprovalTimestamp + _cooldownDuration(), "DAO: 90-day release cooldown");
         Proposal storage proposal = proposals[_proposalId];
 
         require(!proposal.executed, "DAO: already executed");
         require(!proposal.cancelled, "DAO: proposal cancelled");
         require(!proposalPaused[_proposalId], "DAO: proposal is paused");
-        require(block.timestamp > proposal.votingEnd, "DAO: voting not ended");
+        require(block.timestamp > _effectiveVotingEnd(_proposalId), "DAO: voting not ended");
 
         // Verify minimum unique voters participated
-        require(proposal.voterCount >= MIN_VOTERS, "DAO: minimum voter count not met");
+        require(proposal.voterCount >= _minimumVoters(), "DAO: minimum voter count not met");
 
-        // Verify quorum: total votes >= 15% of circulating supply (in vote units)
+        // Wallet quorum: ceil(2% of eligible addresses), with the deployment minimum.
         uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
-        uint256 quorumThreshold = _quorumThreshold(proposal.circulatingSupplySnapshot);
-        require(totalVotes > 0 && totalVotes >= quorumThreshold, "DAO: quorum not reached");
+        uint256 quorumThreshold = _quorumThreshold(electorates[_proposalId].walletCount);
+        require(totalVotes > 0 && proposal.voterCount >= quorumThreshold, "DAO: wallet quorum not reached");
 
         // Verify approval: YES votes >= 51% of total votes cast
         require(
@@ -379,7 +419,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         // Verify 30-day timelock has passed since voting ended
         require(
-            block.timestamp >= proposal.votingEnd + TIMELOCK_DURATION,
+            block.timestamp >= _effectiveVotingEnd(_proposalId) + _timelockDuration(),
             "DAO: 30-day timelock not elapsed"
         );
 
@@ -443,6 +483,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && !systemPaused) {
             systemPaused = true;
+            systemPauseStartedAt = block.timestamp;
             ++systemPauseRevision;
             actionExecuted[actionId] = true;
             emit SystemPaused(actionId, msg.sender);
@@ -464,6 +505,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         }
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && systemPaused) {
+            systemPausedSeconds += block.timestamp - systemPauseStartedAt;
+            systemPauseStartedAt = 0;
             systemPaused = false;
             ++systemPauseRevision;
             actionExecuted[actionId] = true;
@@ -489,6 +532,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && !proposalPaused[_proposalId]) {
             proposalPaused[_proposalId] = true;
+            proposalPauseStartedClock[_proposalId] = _systemClock();
             ++proposalPauseRevision[_proposalId];
             actionExecuted[actionId] = true;
             emit ProposalPausedEvent(_proposalId, actionId);
@@ -512,6 +556,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         }
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && proposalPaused[_proposalId]) {
+            proposalPausedSeconds[_proposalId] += _systemClock() - proposalPauseStartedClock[_proposalId];
+            proposalPauseStartedClock[_proposalId] = 0;
             proposalPaused[_proposalId] = false;
             ++proposalPauseRevision[_proposalId];
             actionExecuted[actionId] = true;
@@ -583,15 +629,15 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         }
         if (systemPaused || proposalPaused[_proposalId]) return ProposalStatus.Paused;
         if (block.timestamp < proposal.votingStart) return ProposalStatus.Pending;
-        if (block.timestamp <= proposal.votingEnd) return ProposalStatus.Active;
+        if (block.timestamp <= _effectiveVotingEnd(_proposalId)) return ProposalStatus.Active;
 
         // Voting has ended — check if passed
-        if (proposal.voterCount < MIN_VOTERS) return ProposalStatus.Failed;
+        if (proposal.voterCount < _minimumVoters()) return ProposalStatus.Failed;
 
         uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
-        uint256 quorumThreshold = _quorumThreshold(proposal.circulatingSupplySnapshot);
+        uint256 quorumThreshold = _quorumThreshold(electorates[_proposalId].walletCount);
 
-        bool quorumMet = totalVotes >= quorumThreshold;
+        bool quorumMet = proposal.voterCount >= quorumThreshold;
         bool approvalMet = totalVotes > 0 &&
             (proposal.yesVotes * 10000 >= totalVotes * APPROVAL_BPS);
 
@@ -606,7 +652,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
     function getQuorumThreshold(uint256 _proposalId) external view returns (uint256) {
         require(_proposalId < proposalCount, "DAO: invalid proposal");
-        return _quorumThreshold(proposals[_proposalId].circulatingSupplySnapshot);
+        return _quorumThreshold(electorates[_proposalId].walletCount);
     }
 
     function getVaultBalance() external view returns (uint256) {
@@ -615,11 +661,10 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
     function getTimeUntilExecution(uint256 _proposalId) external view returns (uint256) {
         require(_proposalId < proposalCount, "DAO: invalid proposal");
-        Proposal storage proposal = proposals[_proposalId];
         require(proposalApprovalCount[_proposalId] >= REQUIRED_SIGNATURES, "DAO: voting schedule not set");
-        uint256 executableAt = proposal.votingEnd + TIMELOCK_DURATION;
-        if (lastApprovalTimestamp > 0 && lastApprovalTimestamp + COOLDOWN_DURATION > executableAt) {
-            executableAt = lastApprovalTimestamp + COOLDOWN_DURATION;
+        uint256 executableAt = _effectiveVotingEnd(_proposalId) + _timelockDuration();
+        if (lastApprovalTimestamp > 0 && lastApprovalTimestamp + _cooldownDuration() > executableAt) {
+            executableAt = lastApprovalTimestamp + _cooldownDuration();
         }
         if (block.timestamp >= executableAt) return 0;
         return executableAt - block.timestamp;
@@ -627,7 +672,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
     function getCooldownRemaining() external view returns (uint256) {
         if (lastApprovalTimestamp == 0) return 0;
-        uint256 cooldownEnd = lastApprovalTimestamp + COOLDOWN_DURATION;
+        uint256 cooldownEnd = lastApprovalTimestamp + _cooldownDuration();
         if (block.timestamp >= cooldownEnd) return 0;
         return cooldownEnd - block.timestamp;
     }
@@ -641,9 +686,39 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     // ─────────────────────────────────────────────────────────────────────
 
     // Round participation UP: integer votes must cover the whole stated fraction.
-    function _quorumThreshold(uint256 supply) internal pure returns (uint256) {
-        uint256 denominator = 10000 * TOKENS_PER_VOTE;
-        return (supply * QUORUM_BPS + denominator - 1) / denominator;
+    function _quorumThreshold(uint256 wallets) internal pure returns (uint256) {
+        uint256 required = (wallets * QUORUM_BPS + 9999) / 10000;
+        return required < _minimumVoters() ? _minimumVoters() : required;
+    }
+
+    function _systemPausedTotal() internal view returns(uint256) {
+        return systemPausedSeconds + (systemPaused ? block.timestamp - systemPauseStartedAt : 0);
+    }
+    function _systemClock() internal view returns(uint256) { return block.timestamp - _systemPausedTotal(); }
+    function _effectiveVotingEnd(uint256 id) internal view returns(uint256) {
+        uint256 local = proposalPausedSeconds[id];
+        if (proposalPaused[id]) local += _systemClock() - proposalPauseStartedClock[id];
+        return proposals[id].votingEnd + _systemPausedTotal() - proposalGlobalPauseBaseline[id] + local;
+    }
+    function getEffectiveVotingEnd(uint256 id) external view returns(uint256) {
+        _requireCurrentProposal(id);
+        require(proposalApprovalCount[id] >= REQUIRED_SIGNATURES, "DAO: voting not opened");
+        return _effectiveVotingEnd(id);
+    }
+    function getVotingTimeRemaining(uint256 id) external view returns(uint256) {
+        _requireCurrentProposal(id);
+        require(proposalApprovalCount[id] >= REQUIRED_SIGNATURES, "DAO: voting not opened");
+        uint256 end = _effectiveVotingEnd(id);
+        return end > block.timestamp ? end-block.timestamp : 0;
+    }
+
+    function _votingPeriod() internal pure virtual returns (uint256) { return VOTING_PERIOD; }
+    function _holdingPeriod() internal pure virtual returns (uint256) { return HOLDING_PERIOD; }
+    function _timelockDuration() internal pure virtual returns (uint256) { return TIMELOCK_DURATION; }
+    function _cooldownDuration() internal pure virtual returns (uint256) { return COOLDOWN_DURATION; }
+    function _minimumVoters() internal pure virtual returns (uint256) { return MIN_VOTERS; }
+    function timingConfiguration() external pure returns (uint256 holding, uint256 voting, uint256 timelock, uint256 cooldown, uint256 minimumVoters) {
+        return (_holdingPeriod(), _votingPeriod(), _timelockDuration(), _cooldownDuration(), _minimumVoters());
     }
 
     function _isAuthorized(address _wallet) internal view returns (bool) {
