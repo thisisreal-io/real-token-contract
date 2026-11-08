@@ -31,7 +31,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     uint256 public constant MAX_UNLOCK_PER_PROPOSAL = 1_000_000 * 1e18;
     uint256 public constant TIMELOCK_DURATION = 30 days;
     uint256 public constant COOLDOWN_DURATION = 90 days;
-    uint256 public constant MAX_VOTING_PERIOD = 30 days;
+    uint256 public constant VOTING_PERIOD = 30 days;
+    uint256 public constant HOLDING_PERIOD = 30 days; // Eligibility verification still pending.
     uint256 public constant TOKENS_PER_VOTE = 1_000 * 1e18;
     uint256 public constant QUORUM_BPS = 1500; // 15%
     uint256 public constant APPROVAL_BPS = 5100; // 51%
@@ -73,6 +74,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     }
     event WalletReplacementRequested(uint256 indexed id, address indexed oldWallet, address indexed newWallet, uint256 epoch);
     event WalletReplacementApproved(uint256 indexed id, address indexed signer, uint256 approvals);
+    event VotingOpened(uint256 indexed id, uint256 start, uint256 end);
     event ProposalApproved(uint256 indexed id, address indexed signer, uint256 approvals);
     // Proposals
     uint256 public proposalCount;
@@ -214,24 +216,16 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
      *        DRAFT: computed off-chain. Membership is not proof of token ownership.
      *        Final snapshot, holding-period and vesting-exclusion mechanics are unresolved.
      *        Corporate signers are excluded locally; other exclusions depend on the oracle.
-     * @param _votingStart Unix timestamp when voting begins
-     * @param _votingEnd Unix timestamp when voting ends (must be < 30 days from start)
      */
     function createProposal(
         address _recipient,
         uint256 _amount,
-        bytes32 _merkleRoot,
-        uint256 _votingStart,
-        uint256 _votingEnd
+        bytes32 _merkleRoot
     ) external onlyAuthorized whenSystemNotPaused returns (uint256) {
         require(_recipient != address(0), "DAO: invalid recipient");
         require(_amount > 0 && _amount <= MAX_UNLOCK_PER_PROPOSAL, "DAO: amount exceeds max 1M");
         require(_amount <= realToken.balanceOf(address(this)), "DAO: insufficient vault balance");
         require(_merkleRoot != bytes32(0), "DAO: invalid merkle root");
-        require(_votingStart >= block.timestamp, "DAO: voting start must be in future");
-        require(_votingEnd > _votingStart, "DAO: end must be after start");
-        require(_votingEnd - _votingStart <= MAX_VOTING_PERIOD, "DAO: voting period exceeds 30 days");
-
         uint256 proposalId = proposalCount++;
         uint256 circulatingSnapshot = supplyOracle.getCirculatingSupply();
         require(circulatingSnapshot >= TOKENS_PER_VOTE, "DAO: invalid supply snapshot");
@@ -247,8 +241,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
             amount: _amount,
             merkleRoot: _merkleRoot,
             circulatingSupplySnapshot: circulatingSnapshot,
-            votingStart: _votingStart,
-            votingEnd: _votingEnd,
+            votingStart: 0,
+            votingEnd: 0,
             yesVotes: 0,
             noVotes: 0,
             voterCount: 0,
@@ -262,8 +256,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
             _recipient,
             _amount,
             _merkleRoot,
-            _votingStart,
-            _votingEnd,
+            0,
+            0,
             circulatingSnapshot
         );
 
@@ -277,10 +271,15 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         _requireCurrentProposal(id);
         Proposal storage proposal = proposals[id];
         require(!proposal.cancelled, "DAO: proposal cancelled");
-        require(block.timestamp < proposal.votingStart, "DAO: approval window ended");
+        require(proposalApprovalCount[id] < REQUIRED_SIGNATURES, "DAO: internal approval complete");
         require(!proposalApprovedBy[id][msg.sender], "DAO: duplicate approval");
         proposalApprovedBy[id][msg.sender] = true;
         emit ProposalApproved(id, msg.sender, ++proposalApprovalCount[id]);
+        if (proposalApprovalCount[id] == REQUIRED_SIGNATURES) {
+            proposal.votingStart = block.timestamp;
+            proposal.votingEnd = block.timestamp + VOTING_PERIOD;
+            emit VotingOpened(id, proposal.votingStart, proposal.votingEnd);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -416,7 +415,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         require(msg.sender == proposal.proposer, "DAO: only proposer can cancel");
         require(!proposal.cancelled, "DAO: already cancelled");
         require(!proposal.executed, "DAO: already executed");
-        require(block.timestamp < proposal.votingStart, "DAO: voting already started");
+        require(proposalApprovalCount[_proposalId] < REQUIRED_SIGNATURES, "DAO: voting already started");
 
         proposal.cancelled = true;
 
@@ -580,7 +579,6 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         if (proposal.executed) return ProposalStatus.Executed;
         if (proposalEpoch[_proposalId] != signerEpoch || proposal.cancelled) return ProposalStatus.Cancelled;
         if (proposalApprovalCount[_proposalId] < REQUIRED_SIGNATURES) {
-            if (block.timestamp >= proposal.votingStart) return ProposalStatus.Failed;
             return ProposalStatus.AwaitingApproval;
         }
         if (systemPaused || proposalPaused[_proposalId]) return ProposalStatus.Paused;
@@ -618,6 +616,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     function getTimeUntilExecution(uint256 _proposalId) external view returns (uint256) {
         require(_proposalId < proposalCount, "DAO: invalid proposal");
         Proposal storage proposal = proposals[_proposalId];
+        require(proposalApprovalCount[_proposalId] >= REQUIRED_SIGNATURES, "DAO: voting schedule not set");
         uint256 executableAt = proposal.votingEnd + TIMELOCK_DURATION;
         if (lastApprovalTimestamp > 0 && lastApprovalTimestamp + COOLDOWN_DURATION > executableAt) {
             executableAt = lastApprovalTimestamp + COOLDOWN_DURATION;
