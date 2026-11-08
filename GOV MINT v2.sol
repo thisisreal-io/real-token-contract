@@ -50,6 +50,10 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     address[5] public authorizedWallets;
 
     // Every wallet replacement invalidates proposals and approvals from older groups.
+    // Historical corporate signer wallets never acquire public voting power on removal.
+    mapping(address => bool) public corporateWallet;
+    uint256 public systemPauseRevision;
+    mapping(uint256 => uint256) public proposalPauseRevision;
     uint256 public signerEpoch;
     uint256 public replacementCount;
     uint256 public totalReleased;
@@ -75,7 +79,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
 
-    // Cooldown: tracks when the last proposal was approved
+    // Cooldown: actual timestamp of the most recent successful token release
     uint256 public lastApprovalTimestamp;
 
     // System-wide pause (requires 3-of-5)
@@ -100,7 +104,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         Passed,     // Quorum + approval met, in timelock
         Failed,     // Quorum or approval not met
         Executed,   // Tokens released
-        Cancelled   // Cancelled by proposer before voting starts
+        Cancelled,   // Cancelled by proposer or obsolete signer group
+        Paused       // System or proposal paused; deadlines still use wall-clock time
     }
 
     struct Proposal {
@@ -150,7 +155,6 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     event ProposalUnpausedEvent(uint256 indexed proposalId, bytes32 indexed actionId);
     event ActionSigned(bytes32 indexed actionId, address indexed signer, uint256 signatureCount);
     event AuthorizedWalletUpdated(uint256 indexed index, address oldWallet, address newWallet);
-    event SupplyOracleUpdated(address oldOracle, address newOracle);
 
     // ─────────────────────────────────────────────────────────────────────
     // Modifiers
@@ -195,6 +199,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
             }
         }
         authorizedWallets = _authorizedWallets;
+        for (uint256 i; i < TOTAL_SIGNERS; ++i) corporateWallet[_authorizedWallets[i]] = true;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -206,9 +211,9 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
      * @param _recipient Wallet that receives tokens if proposal passes
      * @param _amount Amount of REAL tokens requested (max 1,000,000)
      * @param _merkleRoot Merkle root of eligible voters (address, votingPower) pairs.
-     *        Computed off-chain: only wallets holding REAL for 30+ days at snapshot.
-     *        MUST exclude vesting/vNFT holders, the DAO wallet, and all SAFE/Corp team
-     *        wallets — see the oracle's isVotingExcluded() and VestingFactory.deployedContracts.
+     *        DRAFT: computed off-chain. Membership is not proof of token ownership.
+     *        Final snapshot, holding-period and vesting-exclusion mechanics are unresolved.
+     *        Corporate signers are excluded locally; other exclusions depend on the oracle.
      * @param _votingStart Unix timestamp when voting begins
      * @param _votingEnd Unix timestamp when voting ends (must be < 30 days from start)
      */
@@ -298,7 +303,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     ) external whenSystemNotPaused nonReentrant {
         _requireCurrentProposal(_proposalId);
         require(proposalApprovalCount[_proposalId] >= REQUIRED_SIGNATURES, "DAO: internal approval missing");
-        require(!_isAuthorized(msg.sender), "DAO: signer cannot vote");
+        require(!corporateWallet[msg.sender], "DAO: corporate wallet cannot vote");
         require(msg.sender != address(this), "DAO: vault cannot vote");
         Proposal storage proposal = proposals[_proposalId];
 
@@ -328,6 +333,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         require(effectivePower > 0, "DAO: zero effective voting power");
         hasVoted[_proposalId][msg.sender] = true;
         proposal.voterCount++;
+        require(proposal.yesVotes + proposal.noVotes + effectivePower <= proposal.circulatingSupplySnapshot / TOKENS_PER_VOTE,
+            "DAO: votes exceed circulating snapshot");
 
         if (_support) {
             proposal.yesVotes += effectivePower;
@@ -362,8 +369,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         // Verify quorum: total votes >= 15% of circulating supply (in vote units)
         uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
-        uint256 quorumThreshold = (proposal.circulatingSupplySnapshot * QUORUM_BPS) /
-            (10000 * TOKENS_PER_VOTE);
+        uint256 quorumThreshold = _quorumThreshold(proposal.circulatingSupplySnapshot);
         require(totalVotes > 0 && totalVotes >= quorumThreshold, "DAO: quorum not reached");
 
         // Verify approval: YES votes >= 51% of total votes cast
@@ -426,7 +432,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
      * @param _nonce Unique identifier for this pause action (prevents replay)
      */
     function signPauseSystem(bytes32 _nonce) external onlyAuthorized {
-        bytes32 actionId = keccak256(abi.encodePacked("PAUSE_SYSTEM", signerEpoch, _nonce));
+        require(!systemPaused, "DAO: already paused");
+        bytes32 actionId = keccak256(abi.encodePacked("PAUSE_SYSTEM", signerEpoch, systemPauseRevision, _nonce));
         require(!actionExecuted[actionId], "DAO: action already executed");
 
         if (!actionSignatures[actionId][msg.sender]) {
@@ -437,6 +444,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && !systemPaused) {
             systemPaused = true;
+            ++systemPauseRevision;
             actionExecuted[actionId] = true;
             emit SystemPaused(actionId, msg.sender);
         }
@@ -446,7 +454,8 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
      * @notice Sign to unpause the entire DAO system. Requires 3 of 5 authorized wallets.
      */
     function signUnpauseSystem(bytes32 _nonce) external onlyAuthorized {
-        bytes32 actionId = keccak256(abi.encodePacked("UNPAUSE_SYSTEM", signerEpoch, _nonce));
+        require(systemPaused, "DAO: not paused");
+        bytes32 actionId = keccak256(abi.encodePacked("UNPAUSE_SYSTEM", signerEpoch, systemPauseRevision, _nonce));
         require(!actionExecuted[actionId], "DAO: action already executed");
 
         if (!actionSignatures[actionId][msg.sender]) {
@@ -457,6 +466,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && systemPaused) {
             systemPaused = false;
+            ++systemPauseRevision;
             actionExecuted[actionId] = true;
             emit SystemUnpaused(actionId, msg.sender);
         }
@@ -466,8 +476,10 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
      * @notice Sign to pause a specific proposal. Requires 3 of 5 authorized wallets.
      */
     function signPauseProposal(uint256 _proposalId, bytes32 _nonce) external onlyAuthorized {
-        require(_proposalId < proposalCount, "DAO: invalid proposal");
-        bytes32 actionId = keccak256(abi.encodePacked("PAUSE_PROPOSAL", signerEpoch, _proposalId, _nonce));
+        require(!proposalPaused[_proposalId], "DAO: already paused");
+        _requireCurrentProposal(_proposalId);
+        require(!proposals[_proposalId].cancelled && !proposals[_proposalId].executed, "DAO: closed proposal");
+        bytes32 actionId = keccak256(abi.encodePacked("PAUSE_PROPOSAL", signerEpoch, _proposalId, proposalPauseRevision[_proposalId], _nonce));
         require(!actionExecuted[actionId], "DAO: action already executed");
 
         if (!actionSignatures[actionId][msg.sender]) {
@@ -478,6 +490,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && !proposalPaused[_proposalId]) {
             proposalPaused[_proposalId] = true;
+            ++proposalPauseRevision[_proposalId];
             actionExecuted[actionId] = true;
             emit ProposalPausedEvent(_proposalId, actionId);
         }
@@ -487,8 +500,10 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
      * @notice Sign to unpause a specific proposal. Requires 3 of 5 authorized wallets.
      */
     function signUnpauseProposal(uint256 _proposalId, bytes32 _nonce) external onlyAuthorized {
-        require(_proposalId < proposalCount, "DAO: invalid proposal");
-        bytes32 actionId = keccak256(abi.encodePacked("UNPAUSE_PROPOSAL", signerEpoch, _proposalId, _nonce));
+        require(proposalPaused[_proposalId], "DAO: not paused");
+        _requireCurrentProposal(_proposalId);
+        require(!proposals[_proposalId].cancelled && !proposals[_proposalId].executed, "DAO: closed proposal");
+        bytes32 actionId = keccak256(abi.encodePacked("UNPAUSE_PROPOSAL", signerEpoch, _proposalId, proposalPauseRevision[_proposalId], _nonce));
         require(!actionExecuted[actionId], "DAO: action already executed");
 
         if (!actionSignatures[actionId][msg.sender]) {
@@ -499,6 +514,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
         if (actionSignatureCount[actionId] >= REQUIRED_SIGNATURES && proposalPaused[_proposalId]) {
             proposalPaused[_proposalId] = false;
+            ++proposalPauseRevision[_proposalId];
             actionExecuted[actionId] = true;
             emit ProposalUnpausedEvent(_proposalId, actionId);
         }
@@ -538,6 +554,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         if (request.approvals == REQUIRED_SIGNATURES) {
             request.executed = true;
             authorizedWallets[request.index] = request.newWallet;
+            corporateWallet[request.newWallet] = true;
             ++signerEpoch;
             emit AuthorizedWalletUpdated(request.index, request.oldWallet, request.newWallet);
         }
@@ -566,6 +583,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
             if (block.timestamp >= proposal.votingStart) return ProposalStatus.Failed;
             return ProposalStatus.AwaitingApproval;
         }
+        if (systemPaused || proposalPaused[_proposalId]) return ProposalStatus.Paused;
         if (block.timestamp < proposal.votingStart) return ProposalStatus.Pending;
         if (block.timestamp <= proposal.votingEnd) return ProposalStatus.Active;
 
@@ -573,8 +591,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         if (proposal.voterCount < MIN_VOTERS) return ProposalStatus.Failed;
 
         uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
-        uint256 quorumThreshold = (proposal.circulatingSupplySnapshot * QUORUM_BPS) /
-            (10000 * TOKENS_PER_VOTE);
+        uint256 quorumThreshold = _quorumThreshold(proposal.circulatingSupplySnapshot);
 
         bool quorumMet = totalVotes >= quorumThreshold;
         bool approvalMet = totalVotes > 0 &&
@@ -591,8 +608,7 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
 
     function getQuorumThreshold(uint256 _proposalId) external view returns (uint256) {
         require(_proposalId < proposalCount, "DAO: invalid proposal");
-        return (proposals[_proposalId].circulatingSupplySnapshot * QUORUM_BPS) /
-            (10000 * TOKENS_PER_VOTE);
+        return _quorumThreshold(proposals[_proposalId].circulatingSupplySnapshot);
     }
 
     function getVaultBalance() external view returns (uint256) {
@@ -603,6 +619,9 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
         require(_proposalId < proposalCount, "DAO: invalid proposal");
         Proposal storage proposal = proposals[_proposalId];
         uint256 executableAt = proposal.votingEnd + TIMELOCK_DURATION;
+        if (lastApprovalTimestamp > 0 && lastApprovalTimestamp + COOLDOWN_DURATION > executableAt) {
+            executableAt = lastApprovalTimestamp + COOLDOWN_DURATION;
+        }
         if (block.timestamp >= executableAt) return 0;
         return executableAt - block.timestamp;
     }
@@ -621,6 +640,12 @@ contract GOVMINTv2 is Initializable, ReentrancyGuardUpgradeable {
     // ─────────────────────────────────────────────────────────────────────
     // Internal Functions
     // ─────────────────────────────────────────────────────────────────────
+
+    // Round participation UP: integer votes must cover the whole stated fraction.
+    function _quorumThreshold(uint256 supply) internal pure returns (uint256) {
+        uint256 denominator = 10000 * TOKENS_PER_VOTE;
+        return (supply * QUORUM_BPS + denominator - 1) / denominator;
+    }
 
     function _isAuthorized(address _wallet) internal view returns (bool) {
         for (uint256 i = 0; i < TOTAL_SIGNERS; i++) {
