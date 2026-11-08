@@ -1,94 +1,69 @@
-# GOV MINT v2 — first development draft
+# GOV MINT v2 — current development reference
 
-Status: **DRAFT — incomplete voting eligibility; do not deploy or fund.**
+**Status: Sepolia rehearsal candidate using signer-attested eligibility. Not production-ready. No live deployment has been performed.**
 
-This is a new contract file requested by Rick on November 7, 2026. It is derived from `DAO Minting Contract.sol` at commit `8fb104ec4d425171252f048cf48738fbff4e98fc` (original blob `44c7d4e3552c1c4f54982adc253d1456b6a519f6`). The original source is preserved byte for byte. V2 releases existing REAL; it does not mint tokens. This is a separate deployment design, **not** a storage-compatible upgrade to the original contract.
+The original `DAO Minting Contract.sol` is preserved. The separate v2 branch began from commit `8fb104ec4d425171252f048cf48738fbff4e98fc`; the original file blob is `44c7d4e3552c1c4f54982adc253d1456b6a519f6`. V2 is a new fixed-implementation deployment design, not a storage-compatible upgrade to V1. It releases existing REAL; it does not mint more tokens.
 
-## Wallet replacement requested by Rick
+## Owner-confirmed rules
 
-1. One of the current five authorized wallets submits the slot and proposed replacement address. Submission records that wallet's approval once.
-2. Two other distinct current authorized wallets approve the same immutable request. The incoming wallet cannot approve its own appointment unless already a current signer; an existing signer cannot be nominated, so in practice it cannot approve.
-3. The third approval atomically replaces the old wallet. There are always five distinct nonzero authorized addresses. The outgoing wallet immediately loses its signer permissions. Its signature is not required: three of the other four wallets can recover a compromised slot.
+- Exactly five authorized corporate wallets; three distinct current approvals for release-proposal initiation and for corporate-wallet replacement.
+- A replacement request records the requester's approval; two other current wallets approve. No outgoing-wallet signature is required. The nominee cannot approve its own appointment. The third approval swaps one address atomically and revokes the old address immediately.
+- Replacement invalidates every unfinished proposal/request and emergency approval from the old signer group. Already executed transfers remain historical facts.
+- Public voting begins on the third internal proposal approval and runs 30 days in production direction; Sepolia runs 30 hours.
+- Tokens stay in members' wallets. Voting power is based on the **lowest balance throughout the prior holding period**, one vote per 1,000 REAL. Production lookback is 30 days; Sepolia uses 30 hours. Top-ups do not instantly add weight and moved/returned tokens cannot regain lost minimum balance within the same lookback.
+- Only qualifying wallet addresses count in quorum. Below-1,000 wallets and credit-only accounts do not count. Corporate/system/DAO/pool/vesting balances are excluded; current policy also excludes contract wallets.
+- Quorum is **2% of eligible wallet addresses, rounded up**, replacing the old 15% token-weight quorum. Sepolia has a five-participating-wallet floor; production has no extra floor selected.
+- At least 51% of counted weighted votes must be YES.
+- Maximum 1M REAL per proposal, 30-day withdrawal delay and 90-day spacing between actual transfers. Sepolia uses 30-hour withdrawal delay and 90-hour spacing. Cumulative releases are capped at 79M REAL.
+- No initial five-year reserve restriction.
 
-This also supports ordinary departures. Recovery works while the system is paused. Approvals cannot be replayed, reused for a different request, or combined across wallet-group changes. Each replacement advances a signer epoch. **As a conservative draft behavior, every unexecuted release proposal and every outstanding replacement request from the previous epoch becomes unusable.** Public votes on those release proposals cannot execute; a fresh proposal and vote are required. Executed-proposal history remains intact. Confirm this reset behavior before production.
+## Implemented protections
 
-## Implemented in this draft
+The contract has no unilateral deployer setter or upgrade entry point. Initialization rejects duplicate/zero corporate signers and non-contract token/oracle addresses. Recovery works while paused. Signer epochs and pause-state revisions isolate old approvals. Past corporate signer addresses remain excluded from public voting. Domain-separated proofs bind the chain, DAO, token and fixed snapshot. Duplicate votes, zero effective weight and excess aggregate vote weight are rejected. Quorum is counted by participating eligible addresses, while 51% approval is measured by counted weighted votes.
 
-| Area | Change |
-| --- | --- |
-| Internal proposal approval | Creator plus two distinct current signers must approve before the fixed public voting start. Missed approval deadline fails closed. Proposal amount, recipient, root and dates cannot be edited. |
-| Wallet recovery | Request plus two additional current approvals; atomic replacement, duplicate/zero/nominee rejection, old-wallet revocation, epoch isolation. |
-| Release frequency | At least 90 days between **actual transfers**, checked at execution for every proposal. Multiple pending proposals cannot execute together. Timestamp never moves backward to an old voting deadline. |
-| Release amounts | Existing 1M-per-proposal cap plus 79M cumulative release ceiling. |
-| Administration | Removed unilateral signer and oracle setters and all UUPS upgrade entry points. `deployer` is provenance only and confers no authority. |
-| Initialization | Exactly five distinct valid signers; token/oracle must contain code; one-time atomic proxy initialization required. Implementation initialization is disabled. |
-| Votes | Reject nonexistent/stale proposals, current corporate signers, the vault, duplicate votes and zero-effective-power votes; require positive vote totals for execution. |
-| Emergency approvals | Three-of-five actions bind the signer epoch; pre-rotation approvals cannot mix with the new group. |
+System and proposal pauses freeze the remaining voting time, including overlap without double counting. The withdrawal-delay timer freezes too; actual transfer spacing continues to use wall-clock time. `getEffectiveVotingEnd` is the operative deadline. Pauses do not silently reject proposals. Corporate rotation invalidates them explicitly through the signer epoch. This implements the recommended freeze behavior from the design discussion.
 
-The v2 draft uses a fixed ERC1967 proxy with **no contract-exposed upgrade path**. Deploying through an independently administrable proxy would undermine that property and is outside this design. A fixed implementation is a working design choice for review, not an instruction to deploy. A new version/migration would be necessary for future logic changes. The fixed oracle address may itself be an upgradeable proxy; its administrators remain a governance dependency.
+The inherited 5% per-address cap is retained for the Sepolia trial. It is calculated against fixed aggregate eligible voting power, never the running vote tally, so voting order has no effect. It does not prove unique people or defeat established multi-wallet ownership. Whole-unit rounding can produce zero caps in very small electorates; the test guide specifies sufficient seed balances. Final production concentration/rounding policy remains subject to review.
 
-## Remaining design and implementation work
+## Sepolia files and instructions
 
-**The contract is not finished and passing local tests is not production acceptance.**
+See **[SEPOLIA_GOV_MINT_V2.md](SEPOLIA_GOV_MINT_V2.md)** for the exact test/deployment steps, configuration, limitations and trust model.
 
-1. **Voting eligibility is unresolved.** The original Merkle method remains. Three signers approve the root, but proofs still demonstrate membership in an approved tree, not historical token ownership, continuous holding, completeness, beneficial ownership or vesting exclusion. No claim of fully on-chain balance verification is made. Decide the balance-verification architecture before building the final vote path and proof-generation/distribution system. Existing REAL has no assumed historical balance checkpoint interface. Current-balance checks alone would not prevent token reuse between wallets. Do not mistake adding three signatures for solving this problem.
-2. **Inherited numbers are test settings, not approved policy:** 15% quorum, 51% approval, 10 voter addresses, 5% cap per address, maximum 30-day voting period. Define production quorum/approval/minimum participants, minimum voting duration/notice, whether the cap is wanted. Addresses do not prove unique people. No new arbitrary production thresholds are selected here.
-3. **Snapshot consistency and exclusion authority:** circulating supply is still captured at proposal creation, with no recorded balance snapshot block for the Merkle tree. Corporate exclusions still consult the external oracle dynamically. Freeze/verify the required eligibility and supply context together and decide how external oracle upgrades and exclusion changes affect an ongoing vote. All current and former v2 corporate signers are now permanently excluded locally, independently of the external oracle. Other organization-controlled wallets and vesting contracts still require complete verified exclusion coverage.
-4. **Pause clock and proposal lifecycle:** original pause controls block votes without extending deadlines. Define restart/extension/cancellation behavior; pending emergency approvals currently have no expiry/revocation beyond signer rotation. Decide proposal expiry, stale snapshots and cancellation/recovery safeguards.
-5. **Initial reserve restriction:** earlier discussion mentioned a five-year initial no-release period, but the maintained reference does not establish its exact current authority or start date. This draft does not silently invent that timestamp.
-6. **Deployment/custody:** no mainnet DAO deployment, reserve transfer, Safe modification or oracle configuration change is included. Verify actual chain state, funding, approved five-wallet identities, exclusion coverage and custody migration. The October 18 oracle record describes reserve custody in a Safe; supply reporting is not DAO release enforcement.
-7. **Independent review and complete tests:** extend adversarial and invariant coverage once these decisions are settled; review failed/NO votes, cap and quorum boundaries, rotation/recovery policy, external token/oracle failures, long-lived snapshots and full reserve accounting. The current suite does not establish these as resolved.
+- `GOV MINT v2.sol`: general v2 draft, production-direction day timings and 2% wallet quorum.
+- `GOV MINT Sepolia v2.sol`: separate fixed test overrides, restricted to Sepolia/local construction.
+- `GOV MINT Test Fixtures.sol`: isolated test token/oracle, never the real deployed contracts.
+- `scripts/gov-mint/build-electorate.mjs`: full-transfer-history minimum-balance reconstruction, exclusions, snapshot manifest and proofs.
+- `scripts/gov-mint/prepare-sepolia.mjs`: read-only preflight and unsigned implementation/proxy deployment transactions.
+- `scripts/gov-mint/compile.mjs`: pinned compiler/dependency validation and bytecode-size check.
+- `config/gov-mint-sepolia.example.json`: address/configuration template without credentials.
+- `test/gov-mint-v2.mjs`: existing protection regressions updated for the new electorate interface.
+- `test/gov-mint-sepolia.mjs`: complete local rehearsal with scanner, unsigned deployment, pauses, YES/NO votes and release/recovery paths.
 
-## Local validation
+## What remains unresolved before production
 
-Uses repository dependencies: Solidity 0.8.28, OpenZeppelin 5.1.0, ethers 6.17.0 and Hardhat 3.17.0. Run:
+**Eligibility history is computed off-chain and attested by three corporate signers.** Merkle inclusion does not cryptographically establish complete transfer history. A malicious RPC can omit some matched transfers undetected by closing-balance reconciliation, and three signers can approve false electorate metadata. This is not the fully independent on-chain holding-history verification previously identified as the final security goal. It is a clearly limited Sepolia rehearsal model. Do not put the real reserve under this model.
+
+The snapshot is a completed canonical block preceding proposal creation, checked during each approval within native blockhash availability; it is not a snapshot mined exactly when the third approval opens voting. The eligible manifest, holder count and aggregate eligible power are frozen together at that snapshot. Rework the exact-opening snapshot/publication and historical-proof architecture before production. The external oracle supplies the snapshot's economic circulating figure and exclusions; eligible supply is computed separately, and dynamic oracle exclusion checks at voting time remain an administrative trust dependency. The mainnet supply oracle is untouched.
+
+Other production work includes complete corporate/pool exclusion coverage, final concentration policy, pending-approval expiry/revocation, developer/security review, live chain verification and reserve-custody migration. No test result is an independent security audit.
+
+## Validation
+
+Run the two suites sequentially, on an isolated localhost Hardhat chain:
 
 ```bash
 npm install
 node test/run-gov-mint-v2.cjs
+node test/run-gov-mint-v2.cjs test/gov-mint-sepolia.mjs
 ```
 
-The runner starts an isolated localhost Hardhat chain, compiles v2 and test mocks, runs `test/gov-mint-v2.mjs`, and shuts down the child chain. It uses no live-chain RPC, real keys, Safe transaction or deployment. Twelve integration groups cover initialization, absence of unilateral controls/upgrades, internal proposal approvals, proof/duplicate/exclusion checks, timelock and actual-transfer cooldown, replacement authority, stale signatures, recovery while paused, and invalid supply/zero effective voting power. **Mock voting trees intentionally do not prove real token holdings; this suite does not resolve the eligibility gap.**
+No private keys or live-chain transactions are used by the local suites. See the Sepolia guide for actual deployment preparation; none has been broadcast by this work.
 
-## Sources for review
+## Historical sources
 
-- DAO Governance / Governance & Token Release Structure: https://docs.google.com/document/d/1-iDf2Tfti7_X82m4hQAUPOAMA7SQ3kWyItr7C0XMRAw/edit
+- Original governance specification: https://docs.google.com/document/d/1-iDf2Tfti7_X82m4hQAUPOAMA7SQ3kWyItr7C0XMRAw/edit
 - Official active-development reference: https://drive.google.com/file/d/1E6fXcOJT2nV7SG_kjjg_djt0RmrVV2kg/view
-- October 25 proposed initiation/replacement additions: https://drive.google.com/file/d/18-xAWr3h_v9qwUBEshtnEf36C8IYT4Wq/view
-- October 18 Supply Oracle deployment reference: https://drive.google.com/file/d/14bcO8IcD94Vd9OrDRQjQTeQF5JLydPOT/view
+- October 25 additions: https://drive.google.com/file/d/18-xAWr3h_v9qwUBEshtnEf36C8IYT4Wq/view
+- Supply Oracle mainnet record: https://drive.google.com/file/d/14bcO8IcD94Vd9OrDRQjQTeQF5JLydPOT/view
 
-No merge, deployment, live wallet action or developer message is part of this draft.
-
-
-## Second development pass
-
-- Quorum is rounded upward consistently in execution, proposal status and threshold reads. A fractional participation requirement cannot pass with fewer whole votes than required.
-- Emergency approvals bind both the signer epoch and the relevant pause-state revision. Partial signatures cannot survive a pause/unpause cycle. Opposite-state preapprovals are rejected.
-- Former corporate signers remain excluded from public voting, even when the external oracle omits them and their Merkle proof is valid.
-- Paused state is visible in proposal status. Obsolete/cancelled/executed proposals cannot collect emergency pause approvals. This does not yet change wall-clock deadlines; extension/restart policy remains undecided.
-- Execution countdown includes the global release cooldown as well as the proposal timelock. It is a time-only view, not a guarantee the proposal satisfies all execution conditions.
-- Counted votes cannot exceed the circulating snapshot's whole-token vote capacity. This is a sanity bound, not proof that individual voting balances are genuine.
-- Local compile succeeded without warnings; optimized runtime 16,729 bytes. Twelve EVM integration groups passed, including the new pause-cycle replay, fractional quorum, paused-status, retired-corporate-voter and cooldown-countdown regressions.
-
-## Owner direction: noncustodial voting and holding period
-
-Rick selected **keep tokens in members' wallets**. Do not add a voting-token deposit, escrow or lock requirement.
-
-Rick clarified that eligibility must include a prior holding period to prevent token movement being used for repeat voting. **30 days was given as an example, not a final approved duration.** A balance at a single snapshot does not prove continuous holding during a prior interval. A pair of endpoint balances does not prove it either: tokens could leave and return between the endpoints.
-
-Proposed interpretation for confirmation: weight only the minimum eligible balance continuously maintained throughout the holding interval ending at the proposal's fixed snapshot. New top-ups do not immediately add voting power; withdrawals reduce the continuously maintained eligible amount. This interpretation applies to fungible balance amounts rather than tracking named token units. No code currently enforces this requirement. Decide whether this interpretation and duration are approved before implementation.
-
-For the final proof design, bind every vote to the same canonical snapshot, chain, REAL token, token storage layout and eligibility/exclusion policy. Historical storage proofs can authenticate account/storage values against an Ethereum state root, but an endpoint proof alone cannot establish a holding history. A complete transfer-history/receipt proof or another cryptographically verified history construction is still needed for continuous holding. Do not present a corporation-approved Merkle list as equivalent verification. No unverified token storage slot or live-chain state is assumed.
-
-Primary technical references for the proposed proof design:
-- https://eips.ethereum.org/EIPS/eip-1186 — account/storage proofs authenticated by the block state root.
-- https://docs.soliditylang.org/en/latest/units-and-global-variables.html — native blockhash is limited to the most recent 256 blocks; authenticating an older lookback requires an additional verified history mechanism.
-
-This owner direction is recorded for ongoing design. The eligibility implementation remains incomplete; this PR remains a development draft.
-
-
-## Confirmed timing decisions
-
-Rick confirmed a 30-day prior holding requirement and exactly 30 days of public voting. The third current authorized-wallet approval now sets votingStart to its transaction timestamp and votingEnd to that timestamp plus 30 days. createProposal no longer accepts caller-chosen start/end times. The third approval emits VotingOpened. Unapproved proposals do not have an execution countdown. The 30-day withdrawal delay follows the public voting end, and 90-day spacing remains based on actual releases.
-
-HOLDING_PERIOD records the approved 30-day requirement but does not itself enforce balance history. Noncustodial historical eligibility verification and the canonical snapshot at opening remain unfinished; the inherited tree/supply snapshot at creation must be replaced in that work. Do not describe the holding rule as implemented merely because a constant exists. Prior documentation about preselected starts/approval deadlines is superseded by this timing decision.
+The rules confirmed in this conversation and summarized above supersede the corresponding older open questions and inherited test values. Governance reserve releases remain distinct from ordinary community polls, vesting and public supply reporting.
