@@ -112,6 +112,7 @@ const oldBalance=await token.balanceOf(addresses[19]);
 await tx(dao.connect(accounts[18]).executeProposal(first.id));
 assert.equal((await token.balanceOf(addresses[19]))-oldBalance,ethers.parseEther('1000000'));
 const releaseTime=Number(await dao.lastApprovalTimestamp());
+assert.equal(await dao.getTimeUntilExecution(second.id),90n*BigInt(day));
 assert(releaseTime>first.end);
 assert.equal(await dao.totalReleased(),ethers.parseEther('1000000'));
 await reverts(dao.executeProposal(second.id));
@@ -160,6 +161,40 @@ await reverts(recovery.connect(accounts[3]).signUnpauseSystem(ethers.id('unpause
 for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signUnpauseSystem(ethers.id('unpause')));
 assert.equal(await recovery.systemPaused(),false);
 ok('wallet recovery works during emergency pause; only the current group can unpause');
+
+// Emergency approvals are bound to a pause-state revision as well as a signer epoch.
+const staleNonce=ethers.id('old-partial-pause');
+await reverts(recovery.signUnpauseSystem(ethers.id('preapproved-unpause')));
+await tx(recovery.signPauseSystem(staleNonce));
+for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signPauseSystem(ethers.id('different-pause')));
+for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signUnpauseSystem(ethers.id('fresh-unpause')));
+await tx(recovery.connect(accounts[1]).signPauseSystem(staleNonce));
+await tx(recovery.connect(accounts[2]).signPauseSystem(staleNonce));
+assert.equal(await recovery.systemPaused(),false,'old-cycle signature must not count');
+await tx(recovery.signPauseSystem(staleNonce));
+assert.equal(await recovery.systemPaused(),true);
+for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signUnpauseSystem(ethers.id('finish-unpause')));
+ok('opposite-state preapprovals rejected; partial approvals cannot survive a full pause/unpause cycle');
+
+await tx(oracle.setSupply(ethers.parseEther('1000001')));
+const rounded=await propose(recovery);
+assert.equal(await recovery.getQuorumThreshold(rounded.id),151n,'fractional quorum rounds upward');
+for(let i=1;i<3;i++)await tx(recovery.connect(accounts[i]).approveProposal(rounded.id));
+for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signPauseProposal(rounded.id,ethers.id('proposal-pause')));
+assert.equal(await recovery.getProposalStatus(rounded.id),7n,'paused state exposed');
+await reverts(recovery.signPauseProposal(pending.id,ethers.id('obsolete-proposal')));
+for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signUnpauseProposal(rounded.id,ethers.id('proposal-unpause')));
+assert.equal(await recovery.getProposalStatus(rounded.id),0n);
+ok('quorum rounds upward consistently; paused proposal status is visible and obsolete proposals cannot be paused');
+
+const retiredLeaf=ethers.solidityPackedKeccak256(['address','uint256'],[addresses[4],20]);
+const retired=await propose(recovery,ethers.parseEther('1000000'),retiredLeaf);
+for(let i=1;i<3;i++)await tx(recovery.connect(accounts[i]).approveProposal(retired.id));
+await at(retired.start);
+assert.equal(await oracle.isVotingExcluded(addresses[4]),false,'mock oracle deliberately misses retired corporate wallet');
+assert.equal(await recovery.corporateWallet(addresses[4]),true);
+await reverts(recovery.connect(accounts[4]).castVote(retired.id,true,20,[]));
+ok('removed corporate signer cannot become a public voter even if the oracle omits it and the Merkle proof is valid');
 
 await tx(oracle.setSupply(0));
 await reverts(propose(recovery));
