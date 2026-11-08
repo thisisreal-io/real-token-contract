@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import solc from 'solc';
 import {ethers} from 'ethers';
+import {treeFor} from '../scripts/gov-mint/build-electorate.mjs';
 
 const root=path.resolve(import.meta.dirname,'..');
 const source=fs.readFileSync(path.join(root,'GOV MINT v2.sol'),'utf8');
@@ -69,17 +70,19 @@ await reverts(accounts[0].sendTransaction({to:await dao.getAddress(),data:new et
 assert(!abi.some(x=>x.name==='updateAuthorizedWallet'||x.name==='updateSupplyOracle'));
 ok('reinitialization, implementation initialization and deployer upgrade are blocked; unilateral setters absent');
 
-// Independent sorted-pair tree builder; deliberately uses the original leaf format.
 const voters=addresses.slice(5,15);
-const leaves=voters.map(a=>ethers.solidityPackedKeccak256(['address','uint256'],[a,20]));
-const levels=[leaves];
-while(levels.at(-1).length>1){const old=levels.at(-1),next=[];for(let i=0;i<old.length;i+=2){if(i+1===old.length)next.push(old[i]);else next.push(ethers.keccak256(ethers.concat([old[i],old[i+1]].sort())))}levels.push(next);}
-const merkleRoot=levels.at(-1)[0];
-function proof(index){const result=[];for(let l=0;l<levels.length-1;l++){const neighbor=index^1;if(neighbor<levels[l].length)result.push(levels[l][neighbor]);index=Math.floor(index/2)}return result;}
-async function propose(contract=dao,amount=ethers.parseEther('1000000'),rootHash=merkleRoot) {
+const proofSets=new Map();
+function proof(p,index){return proofSets.get(p.key)[index];}
+async function propose(contract=dao,amount=ethers.parseEther('1000000'),singleWallet=null,walletCount=10,totalVotingPower=200) {
  const id=Number(await contract.proposalCount()),start=(await now())+day,end=start+day;
- await tx(contract.createProposal(addresses[19],amount,rootHash));
- return {id,start,end};
+ const block=await provider.getBlock('latest');
+ const context={chainId:31337,dao:await contract.getAddress(),token:await token.getAddress(),snapshotBlock:block.number,snapshotHash:block.hash};
+ const entries=(singleWallet?[singleWallet]:voters).map(wallet=>({wallet,power:20}));
+ const tree=treeFor(context,entries);
+ const electorate={walletCount,totalVotingPower,circulatingSupply:await oracle.getCirculatingSupply(),snapshotBlock:block.number,snapshotHash:block.hash,manifestHash:ethers.id('local test manifest')};
+ await tx(contract.createProposal(addresses[19],amount,tree.root,electorate));
+ const key=`${await contract.getAddress()}:${id}`;proofSets.set(key,tree.proofs);
+ return {id,start,end,key};
 }
 const first=await propose(),second=await propose();
 await reverts(dao.connect(accounts[5]).approveProposal(first.id));
@@ -88,7 +91,7 @@ await tx(dao.connect(accounts[1]).approveProposal(first.id));
 assert.equal(await dao.proposalApprovalCount(first.id),2n);
 const snapshot=await provider.send('evm_snapshot',[]);
 await at(first.start);
-await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(0)));
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(first,0)));
 assert.equal(await dao.getProposalStatus(first.id),2n);
 await provider.send('evm_revert',[snapshot]);
 ok('creator counts once, outsiders/duplicates rejected; two approvals never open voting');
@@ -105,13 +108,13 @@ for (const p of [first,second]) {
 assert.equal(await dao.HOLDING_PERIOD(),30n*BigInt(day));
 await reverts(dao.connect(accounts[3]).approveProposal(first.id));
 await reverts(dao.castVote(first.id,true,20,[]));
-await reverts(dao.connect(accounts[5]).castVote(999,true,20,proof(0)));
-await reverts(dao.connect(accounts[5]).castVote(first.id,true,21,proof(0)));
+await reverts(dao.connect(accounts[5]).castVote(999,true,20,proof(first,0)));
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,21,proof(first,0)));
 await tx(oracle.setExcluded(addresses[5],true));
-await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(0)));
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(first,0)));
 await tx(oracle.setExcluded(addresses[5],false));
-for(const p of [first,second])for(let i=0;i<10;i++)await tx(dao.connect(accounts[i+5]).castVote(p.id,true,20,proof(i)));
-await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(0)));
+for(const p of [first,second])for(let i=0;i<10;i++)await tx(dao.connect(accounts[i+5]).castVote(p.id,true,20,proof(p,i)));
+await reverts(dao.connect(accounts[5]).castVote(first.id,true,20,proof(first,0)));
 ok('three approvals open voting; signer, invalid proposal/proof, excluded wallet and duplicate votes rejected');
 await reverts(dao.executeProposal(first.id));
 await at(Math.max(first.end,second.end)+30*day);
@@ -185,7 +188,7 @@ ok('opposite-state preapprovals rejected; partial approvals cannot survive a ful
 
 await tx(oracle.setSupply(ethers.parseEther('1000001')));
 const rounded=await propose(recovery);
-assert.equal(await recovery.getQuorumThreshold(rounded.id),151n,'fractional quorum rounds upward');
+assert.equal(await recovery.getQuorumThreshold(rounded.id),1n,'quorum is 2% of eligible addresses, rounded up');
 for(let i=1;i<3;i++)await tx(recovery.connect(accounts[i]).approveProposal(rounded.id));
 for(let i=0;i<3;i++)await tx(recovery.connect(accounts[i]).signPauseProposal(rounded.id,ethers.id('proposal-pause')));
 assert.equal(await recovery.getProposalStatus(rounded.id),7n,'paused state exposed');
@@ -195,7 +198,7 @@ assert.equal(await recovery.getProposalStatus(rounded.id),1n);
 ok('quorum rounds upward consistently; paused proposal status is visible and obsolete proposals cannot be paused');
 
 const retiredLeaf=ethers.solidityPackedKeccak256(['address','uint256'],[addresses[4],20]);
-const retired=await propose(recovery,ethers.parseEther('1000000'),retiredLeaf);
+const retired=await propose(recovery,ethers.parseEther('1000000'),addresses[4]);
 for(let i=1;i<3;i++)await tx(recovery.connect(accounts[i]).approveProposal(retired.id));
 await at(retired.start);
 assert.equal(await oracle.isVotingExcluded(addresses[4]),false,'mock oracle deliberately misses retired corporate wallet');
@@ -207,12 +210,12 @@ await tx(oracle.setSupply(0));
 await reverts(propose(recovery));
 await tx(oracle.setSupply(ethers.parseEther('100000001')));
 await reverts(propose(recovery));
-await tx(oracle.setSupply(ethers.parseEther('1000')));
-const tiny=await propose(recovery);
+await tx(oracle.setSupply(ethers.parseEther('10000')));
+const tiny=await propose(recovery,ethers.parseEther('1000000'),null,10,10);
 await tx(recovery.connect(accounts[1]).approveProposal(tiny.id));
 await tx(recovery.connect(accounts[2]).approveProposal(tiny.id));
 await at(tiny.start);
-await reverts(recovery.connect(accounts[5]).castVote(tiny.id,true,20,proof(0)));
+await reverts(recovery.connect(accounts[5]).castVote(tiny.id,true,20,proof(tiny,0)));
 ok('zero/oversized supply snapshots and zero-effective-power votes rejected');
 console.log(`${checks} integration groups passed. DRAFT: Merkle ownership is NOT verified by these contracts; no live RPC or deployment used.`);
 await provider.destroy();
