@@ -1,0 +1,11 @@
+{
+  "chainId": 11155111,
+  "deployer": null,
+  "token": null,
+  "oracle": null,
+  "authorizedWallets": [],
+  "dao": null,
+  "tokenDeploymentBlock": null,
+  "excludedWallets": [],
+  "logBlockRange": 1000
+}
